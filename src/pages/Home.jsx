@@ -35,11 +35,16 @@ function Home() {
   const handleCommand = (command) => {
     if (command.includes("screenshot") || command.includes("screen shot")) {
       handleScreenshot();
-    } else if (command.includes("shutdown") || command.includes("power off")) {
+    } else if (
+      command.includes("shutdown") ||
+      command.includes("power off") ||
+      command.includes("turn off") ||
+      command.includes("poweroff")
+    ) {
       handleShutdown();
     } else {
       speak("Sorry, I did not understand.");
-      setTips("💡 Try saying: 'Take screenshot' or 'Shutdown computer'");
+      setTips("💡 Try saying: 'Take screenshot' or 'Power off device'");
     }
   };
 
@@ -91,33 +96,22 @@ function Home() {
     }
   };
 
-  // ⚡ SHUTDOWN FUNCTION
+  // ⚡ SHUTDOWN FUNCTION (WEB SAFE)
   const handleShutdown = () => {
     if (isMobile) {
-      speak("Power off is not allowed on mobile devices.");
-      setTips("📱 You cannot shut down your phone from a browser.");
+      speak(
+        "I cannot power off your mobile device. Please press the power button manually."
+      );
+      setTips("📱 Mobile devices cannot be shutdown via browser. Use the power button.");
       return;
     }
 
-    speak("Attempting to shut down computer...");
-    setTips("💻 Desktop shutdown is only possible in Node.js or Electron apps.");
-
-    // This works **only if running in a local Node.js environment**
-    if (window.require) {
-      try {
-        const { exec } = window.require("child_process");
-        exec("shutdown /s /t 0", (err) => {
-          if (err) {
-            console.error(err);
-            setTips("❌ Failed to shutdown. Check permissions.");
-          }
-        });
-      } catch (err) {
-        console.error(err);
-      }
-    } else {
-      console.warn("Shutdown blocked by browser security.");
-    }
+    speak(
+      "I cannot directly shutdown your computer from the browser. Please shut down manually."
+    );
+    setTips(
+      "💻 Desktop shutdown blocked in browser. Use Start menu → Power → Shut down (Windows) or Apple menu → Shut Down (Mac)."
+    );
   };
 
   return (
@@ -149,7 +143,8 @@ function Home() {
         </button>
 
         <p className="text-white/70 text-sm mt-4">
-          Try saying: <span className="font-semibold">"Take screenshot"</span> or <span className="font-semibold">"Shutdown computer"</span>
+          Try saying: <span className="font-semibold">"Take screenshot"</span> or{" "}
+          <span className="font-semibold">"Power off device"</span>
         </p>
 
         <p className="text-white/50 text-xs mt-2">
