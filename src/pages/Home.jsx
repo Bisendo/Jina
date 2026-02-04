@@ -275,10 +275,7 @@ function Home() {
       } else {
         // Sample contacts with Tanzanian numbers
         const defaultContacts = [
-          { name: "Mom", number: "+255712345678", email: "mom@example.com", isWhatsApp: true },
-          { name: "Dad", number: "+255754321987", email: "dad@example.com", isWhatsApp: true },
-          { name: "John", number: "+255788123456", email: "john@example.com", isWhatsApp: true },
-          { name: "Sarah", number: "+255765432109", email: "sarah@example.com", isWhatsApp: true },
+          { name: "Biestore", number: "+255621690364", email: "kimotobidaus@gmail.com", isWhatsApp: true },
           { name: "Emergency", number: "112", email: "", isWhatsApp: false },
           { name: "WhatsApp Group", number: "", email: "", isWhatsApp: true, group: true }
         ];
@@ -288,7 +285,7 @@ function Home() {
     } catch (error) {
       console.error("Error setting up contacts:", error);
       const defaultContacts = [
-        { name: "Mom", number: "+255712345678", email: "mom@example.com", isWhatsApp: true },
+        { name: "Biestore", number: "+255621690364", email: "kimotobidaus@gmail.com", isWhatsApp: true },
         { name: "Dad", number: "+255754321987", email: "dad@example.com", isWhatsApp: true }
       ];
       setContacts(defaultContacts);
