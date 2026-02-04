@@ -15,30 +15,48 @@ function Home() {
     call: false,
     camera: false,
     notifications: false,
-    storage: false,
-    screenCapture: false,
+    nfc: false,
+    bluetooth: false,
     deviceOrientation: false,
-    ambientLight: false,
-    proximity: false
+    deviceMotion: false,
+    screenWakeLock: false,
+    mediaSession: false
   });
 
   const [contacts, setContacts] = useState([]);
   const [myPhoneNumber, setMyPhoneNumber] = useState("");
   const [lastCommand, setLastCommand] = useState("");
-  const [isCameraActive, setIsCameraActive] = useState(false);
-  const [capturedPhotos, setCapturedPhotos] = useState([]);
-  const [capturedScreenshots, setCapturedScreenshots] = useState([]);
+  const [isWhatsAppWebOpen, setIsWhatsAppWebOpen] = useState(false);
+  const [socialMediaStatus, setSocialMediaStatus] = useState({
+    whatsapp: "",
+    facebook: "",
+    instagram: "",
+    twitter: "",
+    tiktok: "",
+    telegram: ""
+  });
+  
   const [deviceInfo, setDeviceInfo] = useState({
-    model: '',
-    platform: '',
-    battery: null,
-    storage: null
+    batteryLevel: null,
+    networkType: null,
+    isOnline: true,
+    deviceModel: null,
+    storageInfo: null
+  });
+  
+  const [activeFeatures, setActiveFeatures] = useState({
+    flashlight: false,
+    screenLock: false,
+    audioRecording: false,
+    locationTracking: false
   });
 
   const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
   const speechRecognitionRef = useRef(null);
-  const cameraStreamRef = useRef(null);
   const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
 
   // Check browser support on component mount
   useEffect(() => {
@@ -47,7 +65,8 @@ function Home() {
     setupEventListeners();
     detectMyPhoneNumber();
     detectDeviceInfo();
-    checkStorageAccess();
+    setupDeviceListeners();
+    requestPermissions();
   }, []);
 
   const checkFeatureSupport = () => {
@@ -62,76 +81,127 @@ function Home() {
       call: isMobile,
       camera: 'mediaDevices' in navigator && 'getUserMedia' in navigator.mediaDevices,
       notifications: 'Notification' in window,
-      storage: 'storage' in navigator && 'estimate' in navigator.storage,
-      screenCapture: 'mediaDevices' in navigator && 'getDisplayMedia' in navigator.mediaDevices,
+      nfc: 'NDEFReader' in window,
+      bluetooth: 'bluetooth' in navigator,
       deviceOrientation: 'DeviceOrientationEvent' in window,
-      ambientLight: 'AmbientLightSensor' in window,
-      proximity: 'ondeviceproximity' in window || 'ProximitySensor' in window
+      deviceMotion: 'DeviceMotionEvent' in window,
+      screenWakeLock: 'wakeLock' in navigator,
+      mediaSession: 'mediaSession' in navigator
     });
   };
 
-  const detectDeviceInfo = async () => {
+  const requestPermissions = async () => {
     try {
-      // Detect device model from user agent
-      const ua = navigator.userAgent;
-      let model = 'Unknown Device';
-      
-      if (ua.includes('Pixel 3a')) model = 'Google Pixel 3a';
-      else if (ua.includes('Pixel')) model = 'Google Pixel';
-      else if (ua.includes('iPhone')) model = 'iPhone';
-      else if (ua.includes('Samsung')) model = 'Samsung';
-      else if (ua.includes('Android')) model = 'Android Device';
-      
-      // Get battery info
-      let batteryInfo = null;
-      if (supportedFeatures.battery) {
-        try {
-          const battery = await navigator.getBattery();
-          batteryInfo = {
-            level: Math.round(battery.level * 100),
-            charging: battery.charging,
-            chargingTime: battery.chargingTime,
-            dischargingTime: battery.dischargingTime
-          };
-        } catch (error) {
-          console.log("Could not get battery info:", error);
-        }
+      // Request notification permission
+      if ('Notification' in window && Notification.permission === 'default') {
+        await Notification.requestPermission();
       }
-
-      // Get storage info
-      let storageInfo = null;
-      if (supportedFeatures.storage) {
-        try {
-          const estimate = await navigator.storage.estimate();
-          storageInfo = {
-            used: Math.round(estimate.usage / (1024 * 1024)), // MB
-            quota: Math.round(estimate.quota / (1024 * 1024)), // MB
-            percentage: estimate.quota ? Math.round((estimate.usage / estimate.quota) * 100) : 0
-          };
-        } catch (error) {
-          console.log("Could not get storage info:", error);
-        }
+      
+      // Request microphone permission
+      if ('mediaDevices' in navigator) {
+        await navigator.mediaDevices.getUserMedia({ audio: true })
+          .then(() => console.log("Microphone permission granted"))
+          .catch(() => console.log("Microphone permission denied"));
       }
-
-      setDeviceInfo({
-        model,
-        platform: navigator.platform,
-        battery: batteryInfo,
-        storage: storageInfo
-      });
     } catch (error) {
-      console.log("Error detecting device info:", error);
+      console.log("Permission request error:", error);
+    }
+  };
+
+  const detectDeviceInfo = async () => {
+    // Detect device model
+    const userAgent = navigator.userAgent;
+    let deviceModel = "Unknown Device";
+    
+    if (userAgent.match(/Android/i)) {
+      const match = userAgent.match(/Android\s([0-9.]+)/);
+      deviceModel = `Android ${match ? match[1] : ''}`;
+    } else if (userAgent.match(/iPhone|iPad|iPod/i)) {
+      const match = userAgent.match(/OS\s([0-9_]+)/);
+      deviceModel = `iOS ${match ? match[1].replace(/_/g, '.') : ''}`;
+    }
+    
+    // Get battery status
+    if ('getBattery' in navigator) {
+      try {
+        const battery = await navigator.getBattery();
+        setDeviceInfo(prev => ({ 
+          ...prev, 
+          batteryLevel: Math.round(battery.level * 100),
+          isOnline: navigator.onLine
+        }));
+        
+        // Listen for battery changes
+        battery.addEventListener('levelchange', () => {
+          setDeviceInfo(prev => ({ 
+            ...prev, 
+            batteryLevel: Math.round(battery.level * 100)
+          }));
+        });
+      } catch (error) {
+        console.log("Battery info not available:", error);
+      }
+    }
+    
+    // Get network type
+    if ('connection' in navigator) {
+      const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      if (connection) {
+        setDeviceInfo(prev => ({ ...prev, networkType: connection.effectiveType }));
+        
+        connection.addEventListener('change', () => {
+          setDeviceInfo(prev => ({ 
+            ...prev, 
+            networkType: connection.effectiveType,
+            isOnline: navigator.onLine
+          }));
+        });
+      }
+    }
+    
+    setDeviceInfo(prev => ({ ...prev, deviceModel }));
+  };
+
+  const setupDeviceListeners = () => {
+    // Online/Offline detection
+    window.addEventListener('online', () => {
+      setDeviceInfo(prev => ({ ...prev, isOnline: true }));
+      speak("You're back online");
+    });
+    
+    window.addEventListener('offline', () => {
+      setDeviceInfo(prev => ({ ...prev, isOnline: false }));
+      speak("You're offline");
+    });
+    
+    // Battery level alerts
+    if ('getBattery' in navigator) {
+      navigator.getBattery().then(battery => {
+        battery.addEventListener('levelchange', () => {
+          if (battery.level < 0.2) {
+            speak("Battery is low, only " + Math.round(battery.level * 100) + " percent remaining");
+          } else if (battery.level < 0.1) {
+            speak("Critical battery level, please charge immediately");
+          }
+        });
+      });
     }
   };
 
   const detectMyPhoneNumber = async () => {
     try {
-      // For Google Pixel/Android devices, we can try to get phone info
-      if (navigator.userAgent.includes('Android')) {
-        // Try to get from device properties (limited in browser)
-        if (navigator.userAgent.includes('Pixel 3a')) {
-          // Pixel 3a specific detection
-          setMyPhoneNumber("Pixel 3a Detected");
+      // Check for SIM card info (Android Chrome only)
+      if ('connection' in navigator && isAndroid) {
+        const connection = navigator.connection;
+        // Some Android devices expose phone number through this API
+      }
+      
+      // Try to detect from device (experimental)
+      if ('userAgentData' in navigator) {
+        const ua = navigator.userAgentData;
+        if (ua.mobile) {
+          // This is a mobile device
+          setMyPhoneNumber("+2557XXXXXXX"); // Placeholder
         }
       }
       
@@ -145,7 +215,7 @@ function Home() {
             const myContact = userContacts.find(c => 
               c.name && c.name[0].toLowerCase().includes('me')
             );
-            if (myContact?.tel?.[0]) {
+            if (myContact && myContact.tel && myContact.tel[0]) {
               setMyPhoneNumber(myContact.tel[0]);
             }
           }
@@ -153,25 +223,14 @@ function Home() {
           console.log("Could not get phone from contacts:", error);
         }
       }
-    } catch (error) {
-      console.log("Could not detect phone number:", error);
-    }
-  };
-
-  const checkStorageAccess = async () => {
-    try {
-      // Check if we can access storage
-      if ('storage' in navigator && 'persist' in navigator.storage) {
-        const isPersisted = await navigator.storage.persisted();
-        if (!isPersisted) {
-          const persisted = await navigator.storage.persist();
-          if (persisted) {
-            console.log("Storage persistence granted");
-          }
-        }
+      
+      // Check localStorage
+      const savedNumber = localStorage.getItem('myPhoneNumber');
+      if (savedNumber) {
+        setMyPhoneNumber(savedNumber);
       }
     } catch (error) {
-      console.log("Storage access error:", error);
+      console.log("Could not detect phone number:", error);
     }
   };
 
@@ -179,91 +238,83 @@ function Home() {
     try {
       if (supportedFeatures.contacts) {
         const contactManager = new ContactsManager();
-        const props = await contactManager.getProperties(['name', 'tel', 'email', 'photo']);
+        const props = await contactManager.getProperties(['name', 'tel', 'email']);
         if (props.includes('name') && props.includes('tel')) {
-          const userContacts = await contactManager.select(['name', 'tel', 'email', 'photo'], { 
+          const userContacts = await contactManager.select(['name', 'tel', 'email'], { 
             multiple: true 
           });
           const formattedContacts = userContacts.map(contact => ({
             name: contact.name ? contact.name[0] : 'Unknown',
             number: contact.tel ? contact.tel[0] : '',
             email: contact.email ? contact.email[0] : '',
-            photo: contact.photo ? contact.photo[0] : null
+            isWhatsApp: false
           }));
           setContacts(formattedContacts);
-          saveToLocalStorage('voiceAssistantContacts', formattedContacts);
+          
+          // Save to localStorage as backup
+          localStorage.setItem('voiceAssistantContacts', JSON.stringify(formattedContacts));
           return;
         }
       }
       
-      // Load from localStorage
-      const savedContacts = loadFromLocalStorage('voiceAssistantContacts');
+      // Fallback to localStorage
+      const savedContacts = localStorage.getItem('voiceAssistantContacts');
       if (savedContacts) {
-        setContacts(savedContacts);
+        const contactsData = JSON.parse(savedContacts);
+        setContacts(contactsData);
+        
+        // Mark contacts with WhatsApp
+        const updatedContacts = contactsData.map(contact => {
+          // Check if contact likely has WhatsApp (has phone number)
+          return {
+            ...contact,
+            isWhatsApp: contact.number && contact.number.length > 5
+          };
+        });
+        setContacts(updatedContacts);
       } else {
-        // Default contacts
+        // Sample contacts with Tanzanian numbers
         const defaultContacts = [
-          { name: "Mom", number: "+255712345678", email: "mom@example.com" },
-          { name: "Dad", number: "+255754321987", email: "dad@example.com" },
-          { name: "Emergency", number: "112", email: "" }
+          { name: "Mom", number: "+255712345678", email: "mom@example.com", isWhatsApp: true },
+          { name: "Dad", number: "+255754321987", email: "dad@example.com", isWhatsApp: true },
+          { name: "John", number: "+255788123456", email: "john@example.com", isWhatsApp: true },
+          { name: "Sarah", number: "+255765432109", email: "sarah@example.com", isWhatsApp: true },
+          { name: "Emergency", number: "112", email: "", isWhatsApp: false },
+          { name: "WhatsApp Group", number: "", email: "", isWhatsApp: true, group: true }
         ];
         setContacts(defaultContacts);
-        saveToLocalStorage('voiceAssistantContacts', defaultContacts);
+        localStorage.setItem('voiceAssistantContacts', JSON.stringify(defaultContacts));
       }
     } catch (error) {
       console.error("Error setting up contacts:", error);
-    }
-  };
-
-  const saveToLocalStorage = (key, data) => {
-    try {
-      localStorage.setItem(key, JSON.stringify(data));
-    } catch (error) {
-      console.error("Error saving to localStorage:", error);
-    }
-  };
-
-  const loadFromLocalStorage = (key) => {
-    try {
-      const data = localStorage.getItem(key);
-      return data ? JSON.parse(data) : null;
-    } catch (error) {
-      console.error("Error loading from localStorage:", error);
-      return null;
+      const defaultContacts = [
+        { name: "Mom", number: "+255712345678", email: "mom@example.com", isWhatsApp: true },
+        { name: "Dad", number: "+255754321987", email: "dad@example.com", isWhatsApp: true }
+      ];
+      setContacts(defaultContacts);
     }
   };
 
   const setupEventListeners = () => {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     
-    // Device orientation (for Pixel 3a features)
-    if (supportedFeatures.deviceOrientation) {
-      window.addEventListener('deviceorientation', handleDeviceOrientation);
-    }
-    
-    // Proximity sensor (Pixel 3a has this)
-    if (supportedFeatures.proximity) {
-      window.addEventListener('deviceproximity', handleProximity);
-    }
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key === ' ') {
+        e.preventDefault();
+        if (listening) {
+          stopListening();
+        } else {
+          startListening();
+        }
+      }
+    });
   };
 
   const handleVisibilityChange = () => {
     if (document.hidden && listening) {
       stopListening();
     }
-    if (document.hidden && isCameraActive) {
-      closeCamera();
-    }
-  };
-
-  const handleDeviceOrientation = (event) => {
-    // Can be used for gesture controls
-    console.log("Device orientation:", event);
-  };
-
-  const handleProximity = (event) => {
-    // Can be used for proximity-based features
-    console.log("Proximity:", event);
   };
 
   // 🎤 VOICE LISTENING
@@ -273,7 +324,7 @@ function Home() {
     if (!SpeechRecognition) {
       alert("❌ Speech recognition not supported in this browser");
       setMessage("Speech recognition not supported");
-      setTips("Try using Chrome on Pixel 3a for best experience");
+      setTips("Try using Chrome, Edge, or Safari on desktop");
       return;
     }
 
@@ -284,21 +335,15 @@ function Home() {
     const recognition = new SpeechRecognition();
     speechRecognitionRef.current = recognition;
     
-    recognition.lang = "en-US";
+    recognition.lang = isMobile ? "en-US" : "en-US";
     recognition.continuous = false;
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
 
-    // Enhanced recognition for Pixel 3a
-    if (deviceInfo.model.includes('Pixel')) {
-      recognition.interimResults = true;
-      recognition.continuous = true;
-    }
-
     recognition.start();
     setListening(true);
     setMessage("🎤 Listening... Speak now!");
-    setTips("");
+    setTips("Say a command like 'WhatsApp John hello' or 'turn on flashlight'");
 
     setTimeout(() => {
       if (listening) {
@@ -309,9 +354,7 @@ function Home() {
     }, 15000);
 
     recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map(result => result[0].transcript)
-        .join('');
+      const transcript = event.results[0][0].transcript;
       const command = transcript.toLowerCase();
       setMessage(`🎤 You said: "${transcript}"`);
       setLastCommand(command);
@@ -321,33 +364,30 @@ function Home() {
     recognition.onerror = (event) => {
       console.error("Speech recognition error:", event.error);
       setListening(false);
-      handleRecognitionError(event.error);
+      
+      switch(event.error) {
+        case 'no-speech':
+          setMessage("No speech detected. Try again.");
+          speak("I didn't hear anything. Please try again.");
+          break;
+        case 'audio-capture':
+          setMessage("No microphone found.");
+          speak("No microphone detected. Please check your microphone.");
+          break;
+        case 'not-allowed':
+          setMessage("Microphone access denied.");
+          speak("Microphone permission is required. Please allow microphone access.");
+          break;
+        default:
+          setMessage("Error occurred. Try again.");
+          speak("An error occurred. Please try again.");
+      }
     };
 
     recognition.onend = () => {
       setListening(false);
       speechRecognitionRef.current = null;
     };
-  };
-
-  const handleRecognitionError = (error) => {
-    switch(error) {
-      case 'no-speech':
-        setMessage("No speech detected. Try again.");
-        speak("I didn't hear anything. Please try again.");
-        break;
-      case 'audio-capture':
-        setMessage("No microphone found.");
-        speak("No microphone detected. Please check your microphone.");
-        break;
-      case 'not-allowed':
-        setMessage("Microphone access denied.");
-        speak("Microphone permission is required. Please allow microphone access.");
-        break;
-      default:
-        setMessage("Error occurred. Try again.");
-        speak("An error occurred. Please try again.");
-    }
   };
 
   const stopListening = () => {
@@ -358,640 +398,1141 @@ function Home() {
     setListening(false);
   };
 
-  // 🧠 ENHANCED COMMAND HANDLER FOR PIXEL 3A
+  // 🧠 ENHANCED COMMAND HANDLER
   const handleCommand = (command) => {
     console.log("Processing command:", command);
     
-    // Camera & Photo Commands
-    if (command.includes("take photo") || command.includes("take picture") || command.includes("capture photo")) {
-      takePhoto();
-    }
-    else if (command.includes("open camera") || command.includes("start camera")) {
-      openCamera();
-    }
-    else if (command.includes("close camera") || command.includes("stop camera")) {
-      closeCamera();
-    }
-    // Screenshot Commands
-    else if (command.includes("screenshot") || command.includes("screen capture") || command.includes("capture screen")) {
-      takeScreenshot();
-    }
-    // Device Info Commands
-    else if (command.includes("device info") || command.includes("phone info") || command.includes("my device")) {
-      showDeviceInfo();
-    }
-    else if (command.includes("battery") || command.includes("power level") || command.includes("charge")) {
-      showBatteryInfo();
-    }
-    else if (command.includes("storage") || command.includes("memory") || command.includes("space")) {
-      showStorageInfo();
-    }
-    // Advanced Features
-    else if (command.includes("flashlight") || command.includes("torch") || command.includes("flash")) {
-      toggleFlashlight();
-    }
-    else if (command.includes("record video") || command.includes("start recording")) {
-      startVideoRecording();
-    }
-    else if (command.includes("stop recording") || command.includes("end recording")) {
-      stopVideoRecording();
-    }
-    else if (command.includes("vibrate") || command.includes("buzz")) {
-      triggerVibrationPattern(command);
-    }
-    // WhatsApp & Social Media
-    else if (command.includes("whatsapp status")) {
-      handleWhatsAppStatus(command);
-    }
-    else if (command.includes("whatsapp") && command.includes("send")) {
+    // WhatsApp Direct Message Commands
+    if (command.includes("whatsapp") || command.includes("send on whatsapp")) {
       handleWhatsAppMessage(command);
     }
-    else if (command.includes("facebook status") || command.includes("instagram story")) {
-      handleSocialMediaStatus(command);
+    // WhatsApp Status Commands
+    else if (command.includes("whatsapp status") || command.includes("status on whatsapp")) {
+      handleWhatsAppStatus(command);
     }
-    // Communication
-    else if (command.includes("call")) {
+    // WhatsApp Broadcast
+    else if (command.includes("whatsapp broadcast") || command.includes("broadcast on whatsapp")) {
+      handleWhatsAppBroadcast(command);
+    }
+    // Social Media Commands
+    else if (command.includes("facebook") || command.includes("instagram") || 
+             command.includes("twitter") || command.includes("tiktok") || 
+             command.includes("telegram")) {
+      handleSocialMedia(command);
+    }
+    // Smartphone Feature Commands
+    else if (command.includes("flashlight") || command.includes("torch")) {
+      toggleFlashlight();
+    }
+    else if (command.includes("brightness") || command.includes("screen brightness")) {
+      adjustBrightness(command);
+    }
+    else if (command.includes("volume") || command.includes("sound volume")) {
+      adjustVolume(command);
+    }
+    else if (command.includes("record audio") || command.includes("start recording")) {
+      startAudioRecording();
+    }
+    else if (command.includes("stop recording") || command.includes("end recording")) {
+      stopAudioRecording();
+    }
+    else if (command.includes("take screenshot") || command.includes("capture screen")) {
+      takeScreenshot();
+    }
+    else if (command.includes("set alarm") || command.includes("wake me up")) {
+      setAlarm(command);
+    }
+    else if (command.includes("set timer") || command.includes("countdown")) {
+      setTimer(command);
+    }
+    else if (command.includes("open app") || command.includes("launch app")) {
+      openApp(command);
+    }
+    else if (command.includes("close app") || command.includes("exit app")) {
+      speak("App closing feature requires native integration");
+    }
+    else if (command.includes("check data") || command.includes("mobile data")) {
+      checkMobileData();
+    }
+    else if (command.includes("turn on wifi") || command.includes("enable wifi")) {
+      toggleWifi(true);
+    }
+    else if (command.includes("turn off wifi") || command.includes("disable wifi")) {
+      toggleWifi(false);
+    }
+    else if (command.includes("turn on bluetooth") || command.includes("enable bluetooth")) {
+      toggleBluetooth(true);
+    }
+    else if (command.includes("turn off bluetooth") || command.includes("disable bluetooth")) {
+      toggleBluetooth(false);
+    }
+    else if (command.includes("airplane mode") || command.includes("flight mode")) {
+      toggleAirplaneMode(command);
+    }
+    else if (command.includes("do not disturb") || command.includes("silent mode")) {
+      toggleDoNotDisturb(command);
+    }
+    // Call commands
+    else if (command.includes("call") || command.includes("phone") || command.includes("dial")) {
       handleCallCommand(command);
     }
-    else if (command.includes("message") || command.includes("sms")) {
+    // SMS commands
+    else if (command.includes("message") || command.includes("sms") || command.includes("text")) {
       handleSmsCommand(command);
     }
-    else if (command.includes("email") || command.includes("send email")) {
-      handleEmailCommand(command);
+    // Contact commands
+    else if (command.includes("contact") || command.includes("save contact")) {
+      handleContactCommand(command);
     }
-    // Contacts
-    else if (command.includes("save contact") || command.includes("add contact")) {
-      handleAddContact(command);
+    // Camera commands
+    else if (command.includes("camera") || command.includes("photo") || command.includes("picture")) {
+      handleCameraCommand();
     }
-    else if (command.includes("my contacts") || command.includes("show contacts")) {
-      listContacts();
-    }
-    // Utilities
+    // Time-related commands
     else if (command.includes("time") || command.includes("what time")) {
       getCurrentTime();
     }
+    // Date commands
     else if (command.includes("date") || command.includes("today's date")) {
       getCurrentDate();
     }
-    else if (command.includes("location") || command.includes("where am i")) {
+    // Location commands
+    else if (command.includes("location") || command.includes("where am i") || command.includes("my location")) {
       getCurrentLocation();
     }
-    else if (command.includes("weather") || command.includes("temperature")) {
-      getWeatherInfo();
+    // Battery commands
+    else if (command.includes("battery") || command.includes("power level")) {
+      getBatteryStatus();
     }
-    else if (command.includes("calculator") || command.includes("calculate")) {
-      handleCalculation(command);
+    // Share content commands
+    else if (command.includes("share") || command.includes("send this")) {
+      shareContent();
     }
-    else if (command.includes("alarm") || command.includes("set alarm")) {
-      setAlarm(command);
+    // Copy commands
+    else if (command.includes("copy") || command.includes("clipboard")) {
+      copyToClipboard();
     }
-    else if (command.includes("timer") || command.includes("set timer")) {
-      setTimer(command);
+    // Vibration commands
+    else if (command.includes("vibrate") || command.includes("buzz")) {
+      triggerVibration();
     }
-    else if (command.includes("reminder") || command.includes("set reminder")) {
-      setReminder(command);
+    // Notification commands
+    else if (command.includes("notification") || command.includes("alert")) {
+      sendNotification(command);
     }
-    // Photos & Gallery
-    else if (command.includes("my photos") || command.includes("show photos")) {
-      showCapturedPhotos();
-    }
-    else if (command.includes("my screenshots") || command.includes("show screenshots")) {
-      showCapturedScreenshots();
-    }
-    // Help
+    // Help commands
     else if (command.includes("help") || command.includes("what can you do")) {
       showHelp();
     }
+    // Calculator commands
+    else if (command.includes("calculate") || command.includes("math")) {
+      handleCalculation(command);
+    }
+    // Show my number
     else if (command.includes("my number") || command.includes("what's my number")) {
       showMyNumber();
     }
+    // Show contacts
+    else if (command.includes("my contacts") || command.includes("show contacts")) {
+      listContacts();
+    }
+    // Repeat last command
     else if (command.includes("repeat") || command.includes("again")) {
       repeatLastCommand();
     }
-    // Pixel 3a Specific
-    else if (command.includes("pixel features") || command.includes("google assistant")) {
-      showPixelFeatures();
-    }
-    else if (command.includes("night sight") || command.includes("night mode")) {
-      activateNightMode();
-    }
-    else if (command.includes("portrait mode") || command.includes("portrait")) {
-      activatePortraitMode();
+    // Device info
+    else if (command.includes("device info") || command.includes("phone info")) {
+      showDeviceInfo();
     }
     else {
       speak("Sorry, I didn't understand that command.");
-      setTips("💡 Try: 'take photo', 'screenshot', 'call mom', or 'what's my battery'");
+      setTips("💡 Try: 'WhatsApp John hello', 'turn on flashlight', 'set alarm 7am', or 'take screenshot'");
     }
   };
 
   // 🔊 SPEAK FUNCTION
   const speak = (text) => {
+    if (!window.speechSynthesis) {
+      console.log("Speech synthesis not supported");
+      return;
+    }
+    
     window.speechSynthesis.cancel();
     const speech = new SpeechSynthesisUtterance(text);
     speech.rate = 1.0;
     speech.pitch = 1.0;
     speech.volume = 1.0;
+    
+    // Set voice if available
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length > 0) {
+      const preferredVoice = voices.find(v => v.lang.includes('en')) || voices[0];
+      speech.voice = preferredVoice;
+    }
+    
     window.speechSynthesis.speak(speech);
   };
 
-  // 📸 CAMERA FUNCTIONALITY
-  const openCamera = async () => {
-    if (!supportedFeatures.camera) {
-      speak("Camera not supported on this device");
-      setTips("📸 Camera API not available");
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          facingMode: 'environment',
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        } 
-      });
-      
-      cameraStreamRef.current = stream;
-      setIsCameraActive(true);
-      
-      // Create camera interface
-      const cameraContainer = document.createElement('div');
-      cameraContainer.id = 'camera-container';
-      cameraContainer.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: black;
-        z-index: 1000;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-      `;
-      
-      const video = document.createElement('video');
-      video.srcObject = stream;
-      video.autoplay = true;
-      video.style.cssText = `
-        width: 100%;
-        height: 80%;
-        object-fit: cover;
-      `;
-      
-      const controls = document.createElement('div');
-      controls.style.cssText = `
-        position: absolute;
-        bottom: 20px;
-        display: flex;
-        gap: 20px;
-        align-items: center;
-      `;
-      
-      const captureBtn = document.createElement('button');
-      captureBtn.innerHTML = '📷';
-      captureBtn.style.cssText = `
-        width: 70px;
-        height: 70px;
-        border-radius: 50%;
-        background: white;
-        border: none;
-        font-size: 24px;
-        cursor: pointer;
-      `;
-      captureBtn.onclick = () => takePhotoFromStream(stream);
-      
-      const closeBtn = document.createElement('button');
-      closeBtn.innerHTML = '✖';
-      closeBtn.style.cssText = `
-        width: 50px;
-        height: 50px;
-        border-radius: 50%;
-        background: red;
-        color: white;
-        border: none;
-        font-size: 20px;
-        cursor: pointer;
-      `;
-      closeBtn.onclick = closeCamera;
-      
-      controls.appendChild(captureBtn);
-      controls.appendChild(closeBtn);
-      
-      cameraContainer.appendChild(video);
-      cameraContainer.appendChild(controls);
-      document.body.appendChild(cameraContainer);
-      
-      speak("Camera opened. Say 'take photo' or 'close camera'");
-      setMessage("📸 Camera Active");
-      setTips("Say 'take photo' to capture or 'close camera' to exit");
-      
-    } catch (error) {
-      console.error("Camera error:", error);
-      speak("Failed to open camera. Please check permissions.");
-      setMessage("❌ Camera Error");
-      setTips("Allow camera permission in settings");
-    }
-  };
-
-  const takePhotoFromStream = async (stream) => {
-    try {
-      const video = document.querySelector('#camera-container video');
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const context = canvas.getContext('2d');
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      
-      const photoData = canvas.toDataURL('image/jpeg', 0.9);
-      const photoName = `photo_${Date.now()}.jpg`;
-      
-      // Save photo
-      const newPhoto = {
-        id: Date.now(),
-        name: photoName,
-        data: photoData,
-        timestamp: new Date().toLocaleString(),
-        size: Math.round(photoData.length / 1024) // KB
-      };
-      
-      const updatedPhotos = [newPhoto, ...capturedPhotos];
-      setCapturedPhotos(updatedPhotos);
-      saveToLocalStorage('capturedPhotos', updatedPhotos);
-      
-      // Provide feedback
-      speak("Photo captured and saved!");
-      
-      // Show preview
-      const preview = document.createElement('div');
-      preview.style.cssText = `
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background: white;
-        padding: 20px;
-        border-radius: 10px;
-        z-index: 1001;
-        text-align: center;
-        box-shadow: 0 0 20px rgba(0,0,0,0.5);
-      `;
-      
-      const img = document.createElement('img');
-      img.src = photoData;
-      img.style.cssText = 'max-width: 300px; max-height: 300px; border-radius: 5px;';
-      
-      const closePreview = document.createElement('button');
-      closePreview.textContent = 'Close';
-      closePreview.style.cssText = `
-        margin-top: 10px;
-        padding: 10px 20px;
-        background: #4CAF50;
-        color: white;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-      `;
-      closePreview.onclick = () => preview.remove();
-      
-      preview.appendChild(img);
-      preview.appendChild(closePreview);
-      document.body.appendChild(preview);
-      
-      // Auto-close preview
-      setTimeout(() => {
-        if (document.body.contains(preview)) {
-          preview.remove();
-        }
-      }, 3000);
-      
-    } catch (error) {
-      console.error("Photo capture error:", error);
-      speak("Failed to capture photo");
-    }
-  };
-
-  const takePhoto = () => {
-    if (!isCameraActive) {
-      speak("Opening camera first...");
-      openCamera();
-      setTimeout(() => {
-        if (cameraStreamRef.current) {
-          takePhotoFromStream(cameraStreamRef.current);
-        }
-      }, 2000);
-    } else if (cameraStreamRef.current) {
-      takePhotoFromStream(cameraStreamRef.current);
-    }
-  };
-
-  const closeCamera = () => {
-    if (cameraStreamRef.current) {
-      cameraStreamRef.current.getTracks().forEach(track => track.stop());
-      cameraStreamRef.current = null;
-    }
-    setIsCameraActive(false);
+  // 📱 ENHANCED WHATSAPP DIRECT MESSAGING
+  const handleWhatsAppMessage = (command) => {
+    // Extract contact and message
+    let contactQuery = "";
+    let messageText = "";
     
-    const cameraContainer = document.getElementById('camera-container');
-    if (cameraContainer) {
-      cameraContainer.remove();
+    // Handle different command patterns
+    if (command.includes("whatsapp to")) {
+      const match = command.match(/whatsapp to\s+(.+?)\s+(.+)/i);
+      if (match) {
+        contactQuery = match[1].trim();
+        messageText = match[2].trim();
+      }
+    } else if (command.includes("send whatsapp")) {
+      const match = command.match(/send whatsapp\s+(.+?)\s+(.+)/i);
+      if (match) {
+        contactQuery = match[1].trim();
+        messageText = match[2].trim();
+      }
+    } else if (command.includes("whatsapp")) {
+      // Try to extract from simple format
+      const parts = command.replace(/whatsapp\s+/i, '').split(/\s+(?=\S+$)/);
+      if (parts.length >= 2) {
+        contactQuery = parts.slice(0, -1).join(' ');
+        messageText = parts[parts.length - 1];
+      }
     }
     
-    speak("Camera closed");
-    setMessage("Camera Closed");
+    if (!contactQuery || !messageText) {
+      speak("Who would you like to message on WhatsApp and what should I say?");
+      setTips("💡 Try: 'WhatsApp to John hello there' or 'send WhatsApp message to mom I'll be late'");
+      return;
+    }
+
+    // Find contact
+    const contact = contacts.find(c => 
+      c.name.toLowerCase().includes(contactQuery.toLowerCase()) ||
+      (c.number && c.number.includes(contactQuery.replace(/\D/g, '')))
+    );
+
+    if (contact) {
+      sendDirectWhatsAppMessage(contact, messageText);
+    } else {
+      // Check if it's a direct number
+      const numbers = contactQuery.match(/\d+/g);
+      if (numbers && numbers.join('').length >= 9) {
+        const tempContact = { 
+          name: contactQuery, 
+          number: contactQuery.replace(/\D/g, ''),
+          isWhatsApp: true 
+        };
+        sendDirectWhatsAppMessage(tempContact, messageText);
+      } else {
+        speak(`Contact ${contactQuery} not found.`);
+        setTips(`Try: 'save contact ${contactQuery} +255712345678' first`);
+      }
+    }
   };
 
-  // 📱 SCREENSHOT FUNCTIONALITY
-  const takeScreenshot = async () => {
-    if (isMobile) {
-      speak("On mobile, please use your device's screenshot feature");
-      setTips("📱 Use power + volume down buttons for screenshot");
-      return;
+  const sendDirectWhatsAppMessage = (contact, message) => {
+    if (!isMobile) {
+      speak("Direct WhatsApp messaging works best on mobile devices");
+      setMessage("📱 Switch to mobile for direct WhatsApp");
+      setTips("On desktop, I'll open WhatsApp Web instead");
     }
-
-    if (!supportedFeatures.screenCapture) {
-      speak("Screen capture not supported");
-      setTips("❌ Screen capture API not available");
-      return;
+    
+    // Format phone number for WhatsApp
+    let phoneNumber = contact.number;
+    if (phoneNumber) {
+      // Remove all non-digits
+      phoneNumber = phoneNumber.replace(/\D/g, '');
+      
+      // Ensure proper format for WhatsApp
+      if (phoneNumber.startsWith('0')) {
+        phoneNumber = '255' + phoneNumber.substring(1);
+      } else if (!phoneNumber.startsWith('255') && phoneNumber.length === 9) {
+        phoneNumber = '255' + phoneNumber;
+      }
     }
-
-    try {
-      speak("Select the screen or window you want to capture");
-      setMessage("🖥️ Selecting screen...");
-      
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          displaySurface: "window",
-          cursor: "always"
-        },
-        audio: false
-      });
-      
-      const video = document.createElement('video');
-      video.srcObject = stream;
-      await video.play();
-      
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const context = canvas.getContext('2d');
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      
-      const screenshotData = canvas.toDataURL('image/png');
-      const screenshotName = `screenshot_${Date.now()}.png`;
-      
-      // Save screenshot
-      const newScreenshot = {
-        id: Date.now(),
-        name: screenshotName,
-        data: screenshotData,
-        timestamp: new Date().toLocaleString(),
-        size: Math.round(screenshotData.length / 1024) // KB
-      };
-      
-      const updatedScreenshots = [newScreenshot, ...capturedScreenshots];
-      setCapturedScreenshots(updatedScreenshots);
-      saveToLocalStorage('capturedScreenshots', updatedScreenshots);
-      
-      // Create download link
-      const link = document.createElement('a');
-      link.download = screenshotName;
-      link.href = screenshotData;
+    
+    const encodedMessage = encodeURIComponent(message);
+    let whatsappUrl = '';
+    
+    if (phoneNumber) {
+      // Direct WhatsApp URL scheme
+      whatsappUrl = `whatsapp://send?phone=${phoneNumber}&text=${encodedMessage}`;
+    } else if (contact.group) {
+      // For groups (requires group link)
+      whatsappUrl = `whatsapp://`;
+      speak("For WhatsApp groups, please open WhatsApp manually");
+    } else {
+      whatsappUrl = `whatsapp://send?text=${encodedMessage}`;
+    }
+    
+    speak(`Sending WhatsApp message to ${contact.name || contact.number}: ${message}`);
+    setMessage(`📱 WhatsApp to ${contact.name || 'contact'}...`);
+    setTips(`Opening WhatsApp with message: "${message.substring(0, 50)}..."`);
+    
+    // Create a temporary link to trigger WhatsApp
+    const link = document.createElement('a');
+    link.href = whatsappUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    
+    // Try to open WhatsApp
+    setTimeout(() => {
       link.click();
       
-      stream.getTracks().forEach(track => track.stop());
+      // Fallback to web if app doesn't open
+      setTimeout(() => {
+        if (document.hasFocus()) {
+          // WhatsApp app didn't open, use web version
+          const webUrl = `https://web.whatsapp.com/send?phone=${phoneNumber}&text=${encodedMessage}`;
+          window.open(webUrl, '_blank');
+          setTips("WhatsApp Web opened in browser");
+        }
+      }, 1000);
+    }, 500);
+  };
+
+  // 📱 WHATSAPP STATUS
+  const handleWhatsAppStatus = (command) => {
+    const statusMatch = command.match(/whatsapp status\s+(.+)/i) || 
+                       command.match(/status on whatsapp\s+(.+)/i);
+    
+    const statusText = statusMatch ? statusMatch[1].trim() : 
+                      "Sharing from Voice Assistant! 🎤";
+    
+    const encodedText = encodeURIComponent(statusText);
+    
+    if (isMobile) {
+      // Try to open WhatsApp Status directly
+      const whatsappUrl = `whatsapp://status?text=${encodedText}`;
       
-      speak("Screenshot captured and saved!");
-      setMessage("✅ Screenshot Saved");
-      setTips(`Screenshot saved as ${screenshotName}`);
+      speak(`Creating WhatsApp status: ${statusText}`);
+      setMessage(`📱 WhatsApp Status: "${statusText}"`);
+      setTips("Opening WhatsApp Status...");
       
-    } catch (error) {
-      console.error("Screenshot error:", error);
-      if (error.name === 'NotAllowedError') {
-        speak("Screen sharing permission denied");
-        setTips("❌ Permission denied for screen capture");
+      const link = document.createElement('a');
+      link.href = whatsappUrl;
+      link.target = '_blank';
+      
+      setTimeout(() => {
+        link.click();
+        
+        // Fallback
+        setTimeout(() => {
+          if (document.hasFocus()) {
+            const fallbackUrl = `whatsapp://send?text=${encodedText}`;
+            window.open(fallbackUrl, '_blank');
+          }
+        }, 1000);
+      }, 500);
+      
+      // Save status locally
+      setSocialMediaStatus(prev => ({
+        ...prev,
+        whatsapp: statusText
+      }));
+    } else {
+      speak(`For WhatsApp status, please use your mobile phone`);
+      setMessage(`💻 WhatsApp Status: "${statusText}"`);
+      setTips("This feature works best on mobile devices");
+      navigator.clipboard.writeText(statusText);
+    }
+  };
+
+  // 📢 WHATSAPP BROADCAST
+  const handleWhatsAppBroadcast = (command) => {
+    const broadcastMatch = command.match(/broadcast\s+(.+)/i);
+    const messageText = broadcastMatch ? broadcastMatch[1].trim() : "Important announcement!";
+    
+    // Get WhatsApp contacts
+    const whatsAppContacts = contacts.filter(c => c.isWhatsApp && c.number);
+    
+    if (whatsAppContacts.length === 0) {
+      speak("No WhatsApp contacts found");
+      setTips("Add contacts with phone numbers to use broadcast");
+      return;
+    }
+    
+    speak(`Sending broadcast to ${whatsAppContacts.length} contacts: ${messageText}`);
+    setMessage(`📢 Broadcasting to ${whatsAppContacts.length} contacts`);
+    
+    // Send to first few contacts (limited for demo)
+    const contactsToMessage = whatsAppContacts.slice(0, 3);
+    
+    contactsToMessage.forEach((contact, index) => {
+      setTimeout(() => {
+        sendDirectWhatsAppMessage(contact, messageText);
+      }, index * 2000); // Stagger messages
+    });
+  };
+
+  // 📱 SMARTPHONE FEATURES
+  const toggleFlashlight = () => {
+    if (!isMobile) {
+      speak("Flashlight only works on mobile devices");
+      return;
+    }
+    
+    if ('torch' in navigator.mediaDevices) {
+      // Experimental torch API
+      navigator.mediaDevices.getUserMedia({ video: { torch: true } })
+        .then(stream => {
+          const track = stream.getVideoTracks()[0];
+          const torch = track.getCapabilities().torch;
+          
+          if (torch) {
+            const newState = !activeFeatures.flashlight;
+            track.applyConstraints({
+              advanced: [{ torch: newState }]
+            });
+            
+            setActiveFeatures(prev => ({ ...prev, flashlight: newState }));
+            speak(newState ? "Flashlight turned on" : "Flashlight turned off");
+            setMessage(newState ? "🔦 Flashlight ON" : "🔦 Flashlight OFF");
+          } else {
+            speak("Flashlight not supported on this device");
+          }
+        })
+        .catch(() => {
+          speak("Could not access flashlight");
+        });
+    } else {
+      // Fallback using screen brightness
+      speak("Using screen as flashlight");
+      setActiveFeatures(prev => ({ ...prev, flashlight: !prev.flashlight }));
+      
+      if (activeFeatures.flashlight) {
+        document.body.style.backgroundColor = "#000";
+        document.body.style.filter = "brightness(100)";
+        setMessage("🔦 Screen Flashlight ON");
       } else {
-        speak("Failed to capture screenshot");
-        setTips("❌ Screenshot failed");
+        document.body.style.backgroundColor = "";
+        document.body.style.filter = "";
+        setMessage("🔦 Flashlight OFF");
       }
     }
   };
 
-  // 📱 DEVICE INFO FUNCTIONALITY
-  const showDeviceInfo = () => {
-    let info = `You are using ${deviceInfo.model} on ${deviceInfo.platform}. `;
-    
-    if (deviceInfo.battery) {
-      info += `Battery is at ${deviceInfo.battery.level}%. `;
-      info += deviceInfo.battery.charging ? "Currently charging. " : "";
+  const adjustBrightness = (command) => {
+    const brightnessMatch = command.match(/(increase|decrease|set)\s+brightness\s+(?:to\s+)?(\d+)/i);
+    if (brightnessMatch) {
+      const action = brightnessMatch[1].toLowerCase();
+      let level = parseInt(brightnessMatch[2]);
+      
+      if (action === 'increase') {
+        speak(`Increasing brightness to ${level}%`);
+      } else if (action === 'decrease') {
+        speak(`Decreasing brightness to ${level}%`);
+      } else {
+        speak(`Setting brightness to ${level}%`);
+      }
+      
+      setMessage(`☀️ Brightness: ${level}%`);
+      
+      // In a real app, this would use device APIs
+      setTips("Brightness control requires native app integration");
+    } else {
+      speak("Please specify brightness level");
     }
-    
-    if (deviceInfo.storage) {
-      info += `Storage: ${deviceInfo.storage.used}MB used of ${deviceInfo.storage.quota}MB. `;
-    }
-    
-    speak(info);
-    setMessage(`📱 ${deviceInfo.model}`);
-    setTips(`Platform: ${deviceInfo.platform} | Storage: ${deviceInfo.storage?.percentage || '?'}% used`);
   };
 
-  const showBatteryInfo = async () => {
-    if (supportedFeatures.battery) {
-      try {
-        const battery = await navigator.getBattery();
-        let message = `Battery is at ${Math.round(battery.level * 100)}%. `;
-        message += battery.charging ? "Currently charging. " : "Not charging. ";
+  const adjustVolume = (command) => {
+    const volumeMatch = command.match(/(increase|decrease|set)\s+volume\s+(?:to\s+)?(\d+)/i);
+    if (volumeMatch) {
+      const action = volumeMatch[1].toLowerCase();
+      let level = parseInt(volumeMatch[2]);
+      
+      speak(`${action} volume to ${level} percent`);
+      setMessage(`🔊 Volume: ${level}%`);
+      
+      // Create audio context for volume demonstration
+      if (window.AudioContext) {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
         
-        if (battery.charging && battery.chargingTime !== Infinity) {
-          const hours = Math.floor(battery.chargingTime / 3600);
-          const minutes = Math.floor((battery.chargingTime % 3600) / 60);
-          message += `Will be fully charged in ${hours} hours ${minutes} minutes.`;
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.frequency.value = 440;
+        gainNode.gain.value = level / 100;
+        
+        oscillator.start();
+        setTimeout(() => oscillator.stop(), 500);
+      }
+    }
+  };
+
+  const startAudioRecording = () => {
+    if (!supportedFeatures.camera) {
+      speak("Audio recording not supported");
+      return;
+    }
+    
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => {
+        mediaRecorderRef.current = new MediaRecorder(stream);
+        audioChunksRef.current = [];
+        
+        mediaRecorderRef.current.ondataavailable = (event) => {
+          audioChunksRef.current.push(event.data);
+        };
+        
+        mediaRecorderRef.current.onstop = () => {
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+          const audioUrl = URL.createObjectURL(audioBlob);
+          
+          // Create download link
+          const a = document.createElement('a');
+          a.href = audioUrl;
+          a.download = `recording-${Date.now()}.wav`;
+          a.click();
+          
+          speak("Recording saved");
+          setMessage("🎙️ Recording saved");
+        };
+        
+        mediaRecorderRef.current.start();
+        setActiveFeatures(prev => ({ ...prev, audioRecording: true }));
+        speak("Recording started");
+        setMessage("🎙️ Recording...");
+        setTips("Say 'stop recording' to save");
+      })
+      .catch(() => {
+        speak("Microphone access denied");
+      });
+  };
+
+  const stopAudioRecording = () => {
+    if (mediaRecorderRef.current && activeFeatures.audioRecording) {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+      setActiveFeatures(prev => ({ ...prev, audioRecording: false }));
+      speak("Recording stopped");
+    }
+  };
+
+  const takeScreenshot = () => {
+    // For web apps, we can only capture the current tab
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.captureVisibleTab) {
+      // Chrome extension API
+      chrome.tabs.captureVisibleTab(null, { format: 'png' }, (dataUrl) => {
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = `screenshot-${Date.now()}.png`;
+        a.click();
+        speak("Screenshot taken");
+      });
+    } else {
+      // Use html2canvas for web page screenshots
+      import('html2canvas').then(html2canvas => {
+        html2canvas.default(document.body).then(canvas => {
+          const link = document.createElement('a');
+          link.download = `screenshot-${Date.now()}.png`;
+          link.href = canvas.toDataURL();
+          link.click();
+          speak("Screenshot taken");
+          setMessage("📸 Screenshot saved");
+        });
+      }).catch(() => {
+        speak("Screenshot feature requires html2canvas library");
+      });
+    }
+  };
+
+  const setAlarm = (command) => {
+    const timeMatch = command.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+    if (timeMatch) {
+      let hours = parseInt(timeMatch[1]);
+      const minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+      const meridian = timeMatch[3] ? timeMatch[3].toLowerCase() : '';
+      
+      // Convert to 24-hour format
+      if (meridian === 'pm' && hours < 12) hours += 12;
+      if (meridian === 'am' && hours === 12) hours = 0;
+      
+      const now = new Date();
+      const alarmTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+      
+      if (alarmTime <= now) {
+        alarmTime.setDate(alarmTime.getDate() + 1);
+      }
+      
+      const timeUntilAlarm = alarmTime.getTime() - now.getTime();
+      
+      setTimeout(() => {
+        speak("Alarm! Wake up!");
+        triggerVibration();
+        
+        if (supportedFeatures.notifications) {
+          new Notification('Alarm', { 
+            body: 'Time to wake up!',
+            icon: '/favicon.ico',
+            requireInteraction: true
+          });
         }
+      }, timeUntilAlarm);
+      
+      const alarmTimeStr = alarmTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      speak(`Alarm set for ${alarmTimeStr}`);
+      setMessage(`⏰ Alarm set: ${alarmTimeStr}`);
+    } else {
+      speak("Please specify alarm time");
+    }
+  };
+
+  const setTimer = (command) => {
+    const timerMatch = command.match(/\b(\d+)\s*(minutes?|seconds?|hours?)\b/i);
+    if (timerMatch) {
+      const amount = parseInt(timerMatch[1]);
+      const unit = timerMatch[2].toLowerCase();
+      
+      let milliseconds = 0;
+      switch(unit.charAt(0)) {
+        case 'h': milliseconds = amount * 3600000; break;
+        case 'm': milliseconds = amount * 60000; break;
+        case 's': milliseconds = amount * 1000; break;
+      }
+      
+      speak(`Timer set for ${amount} ${unit}`);
+      setMessage(`⏱️ Timer: ${amount} ${unit}`);
+      
+      setTimeout(() => {
+        speak("Timer complete!");
+        triggerVibration();
+        setMessage("⏱️ Timer Complete!");
+      }, milliseconds);
+    }
+  };
+
+  const openApp = (command) => {
+    const appMatch = command.match(/open\s+(.+)/i);
+    if (appMatch) {
+      const appName = appMatch[1].toLowerCase();
+      let appUrl = '';
+      
+      switch(appName) {
+        case 'whatsapp':
+        case 'whatsapp app':
+          appUrl = 'whatsapp://';
+          break;
+        case 'facebook':
+        case 'facebook app':
+          appUrl = isIOS ? 'fb://' : 'fb://page';
+          break;
+        case 'instagram':
+          appUrl = 'instagram://';
+          break;
+        case 'twitter':
+          appUrl = 'twitter://';
+          break;
+        case 'camera':
+          appUrl = 'camera://';
+          break;
+        case 'gallery':
+        case 'photos':
+          appUrl = 'photos://';
+          break;
+        case 'settings':
+          appUrl = isIOS ? 'App-Prefs://' : 'settings://';
+          break;
+        case 'phone':
+        case 'dialer':
+          appUrl = 'tel://';
+          break;
+        case 'messages':
+        case 'sms':
+          appUrl = 'sms://';
+          break;
+        default:
+          speak(`I don't know how to open ${appName}`);
+          return;
+      }
+      
+      speak(`Opening ${appName}`);
+      setMessage(`📱 Opening ${appName}`);
+      
+      const link = document.createElement('a');
+      link.href = appUrl;
+      link.target = '_blank';
+      setTimeout(() => link.click(), 500);
+    }
+  };
+
+  const checkMobileData = () => {
+    if ('connection' in navigator) {
+      const connection = navigator.connection;
+      if (connection) {
+        const type = connection.effectiveType;
+        const downlink = connection.downlink;
+        const saveData = connection.saveData;
+        
+        let message = `Network type: ${type}, Speed: ${downlink} Mbps`;
+        if (saveData) message += ", Data saver: ON";
         
         speak(message);
-        setMessage(`🔋 ${Math.round(battery.level * 100)}%`);
-        setTips(`Charging: ${battery.charging ? 'Yes' : 'No'}`);
-      } catch (error) {
-        speak("Could not get battery information");
+        setMessage(`📶 ${type} (${downlink} Mbps)`);
       }
     } else {
-      speak("Battery information not available");
+      speak("Network information not available");
     }
   };
 
-  const showStorageInfo = () => {
-    if (deviceInfo.storage) {
-      const { used, quota, percentage } = deviceInfo.storage;
-      const message = `Storage: ${used}MB used of ${quota}MB. That's ${percentage}% full.`;
-      speak(message);
-      setMessage(`💾 ${used}MB / ${quota}MB`);
-      setTips(`${percentage}% used`);
-    } else {
-      speak("Storage information not available");
-    }
-  };
-
-  // ⚡ ADVANCED FEATURES
-  const toggleFlashlight = () => {
-    if (!supportedFeatures.camera) {
-      speak("Flashlight not available");
-      return;
-    }
-
-    speak("Flashlight feature would use camera flash on Pixel 3a");
-    setMessage("🔦 Flashlight");
-    setTips("Pixel 3a camera flash can be controlled via camera API");
-  };
-
-  const startVideoRecording = () => {
-    if (!supportedFeatures.camera) {
-      speak("Video recording not available");
-      return;
-    }
-
-    speak("Video recording would start on Pixel 3a");
-    setMessage("🎥 Recording...");
-    setTips("Video recording uses MediaRecorder API");
-  };
-
-  const stopVideoRecording = () => {
-    speak("Video recording stopped");
-    setMessage("⏹️ Recording Stopped");
-  };
-
-  const triggerVibrationPattern = (command) => {
-    if (!supportedFeatures.vibrate) {
-      speak("Vibration not available");
-      return;
-    }
-
-    let pattern;
-    if (command.includes("strong")) pattern = [300, 100, 300];
-    else if (command.includes("sos")) pattern = [100, 100, 100, 300, 300, 100, 300, 100, 300, 300, 100, 100, 100];
-    else if (command.includes("long")) pattern = [1000];
-    else pattern = [200, 100, 200];
-    
-    navigator.vibrate(pattern);
-    speak("Device vibrating");
-    setMessage("📳 Vibrating...");
-  };
-
-  // 📞 COMMUNICATION FEATURES
-  const handleCallCommand = (command) => {
-    const match = command.match(/call\s+(.+)/);
-    if (match) {
-      const contact = match[1];
-      speak(`Calling ${contact}`);
-      setMessage(`📞 Calling ${contact}...`);
+  const toggleWifi = (enable) => {
+    if (isMobile) {
+      speak(enable ? "Turning WiFi on" : "Turning WiFi off");
+      setMessage(enable ? "📶 WiFi ON" : "📶 WiFi OFF");
+      setTips("WiFi control requires native app or device permissions");
       
-      if (isMobile) {
-        setTimeout(() => {
-          window.open(`tel:${contact.replace(/\D/g, '')}`, '_blank');
-        }, 1000);
+      // This would require a native app in production
+      // For web, we can only show a notification
+      if (supportedFeatures.notifications) {
+        new Notification('WiFi Control', {
+          body: `Would ${enable ? 'enable' : 'disable'} WiFi (requires app)`
+        });
       }
+    }
+  };
+
+  const toggleBluetooth = (enable) => {
+    if (supportedFeatures.bluetooth) {
+      if (enable) {
+        navigator.bluetooth.requestDevice({ acceptAllDevices: true })
+          .then(device => {
+            speak(`Connected to ${device.name}`);
+            setMessage(`🔵 Connected: ${device.name}`);
+          })
+          .catch(() => {
+            speak("Bluetooth connection cancelled");
+          });
+      } else {
+        speak("Bluetooth turned off");
+        setMessage("🔵 Bluetooth OFF");
+      }
+    } else {
+      speak("Bluetooth not supported");
+    }
+  };
+
+  const toggleAirplaneMode = (command) => {
+    const enable = command.includes("on") || command.includes("enable");
+    speak(enable ? "Airplane mode on" : "Airplane mode off");
+    setMessage(enable ? "✈️ Airplane Mode ON" : "✈️ Airplane Mode OFF");
+    setTips("Airplane mode control requires native app");
+  };
+
+  const toggleDoNotDisturb = (command) => {
+    const enable = command.includes("on") || !command.includes("off");
+    speak(enable ? "Do not disturb mode activated" : "Do not disturb mode deactivated");
+    setMessage(enable ? "🔕 Do Not Disturb ON" : "🔔 Do Not Disturb OFF");
+    
+    // Change tab title when in DND mode
+    document.title = enable ? "🔕 Voice Assistant" : "Voice Assistant";
+  };
+
+  const showDeviceInfo = () => {
+    const info = `
+      Device: ${deviceInfo.deviceModel || 'Unknown'},
+      Battery: ${deviceInfo.batteryLevel || 'Unknown'}%,
+      Network: ${deviceInfo.networkType || 'Unknown'},
+      Online: ${deviceInfo.isOnline ? 'Yes' : 'No'},
+      Platform: ${isMobile ? 'Mobile' : 'Desktop'}
+    `;
+    
+    speak(info);
+    setMessage("📱 Device Information");
+    setTips(`Battery: ${deviceInfo.batteryLevel || '?'}% • Network: ${deviceInfo.networkType || '?'}`);
+  };
+
+  // Social Media Handler
+  const handleSocialMedia = (command) => {
+    let platform = '';
+    let action = '';
+    let content = '';
+    
+    // Extract platform
+    if (command.includes("facebook")) {
+      platform = 'facebook';
+      if (command.includes("post") || command.includes("status")) {
+        action = 'post';
+        content = command.replace(/.*facebook\s+(?:post|status)\s+/i, '');
+      } else if (command.includes("message")) {
+        action = 'message';
+        content = command.replace(/.*facebook\s+message\s+/i, '');
+      }
+    } else if (command.includes("instagram")) {
+      platform = 'instagram';
+      if (command.includes("story")) {
+        action = 'story';
+        content = command.replace(/.*instagram\s+story\s+/i, '');
+      } else if (command.includes("post")) {
+        action = 'post';
+        content = command.replace(/.*instagram\s+post\s+/i, '');
+      }
+    } else if (command.includes("twitter")) {
+      platform = 'twitter';
+      action = 'tweet';
+      content = command.replace(/.*twitter\s+(?:post|tweet)\s+/i, '');
+    } else if (command.includes("tiktok")) {
+      platform = 'tiktok';
+      action = 'video';
+      speak("TikTok integration requires the app");
+      return;
+    } else if (command.includes("telegram")) {
+      platform = 'telegram';
+      action = 'message';
+      content = command.replace(/.*telegram\s+/i, '');
+    }
+    
+    if (!content) {
+      content = "Shared from Voice Assistant";
+    }
+    
+    shareOnSocialMedia(platform, action, content);
+  };
+
+  const shareOnSocialMedia = (platform, action, content) => {
+    const encodedContent = encodeURIComponent(content);
+    const encodedUrl = encodeURIComponent(window.location.href);
+    let shareUrl = '';
+    let platformName = '';
+    
+    switch(platform) {
+      case 'facebook':
+        platformName = 'Facebook';
+        if (action === 'post') {
+          shareUrl = `fb://composer?text=${encodedContent}`;
+          if (!isMobile) {
+            shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}&quote=${encodedContent}`;
+          }
+        }
+        break;
+      case 'instagram':
+        platformName = 'Instagram';
+        speak(`For Instagram, please open the app and ${action}: ${content}`);
+        navigator.clipboard.writeText(content);
+        return;
+      case 'twitter':
+        platformName = 'Twitter';
+        shareUrl = `twitter://post?message=${encodedContent}`;
+        if (!isMobile) {
+          shareUrl = `https://twitter.com/intent/tweet?text=${encodedContent}&url=${encodedUrl}`;
+        }
+        break;
+      case 'telegram':
+        platformName = 'Telegram';
+        shareUrl = `tg://msg?text=${encodedContent}`;
+        break;
+    }
+    
+    if (shareUrl) {
+      speak(`Sharing on ${platformName}: ${content}`);
+      setMessage(`📱 ${platformName}: "${content.substring(0, 30)}..."`);
+      
+      const link = document.createElement('a');
+      link.href = shareUrl;
+      link.target = '_blank';
+      setTimeout(() => link.click(), 500);
+    }
+  };
+
+  // Keep existing functions (Call, SMS, Contact, Camera, etc.) from previous code
+  // ... [Previous functions remain the same, just ensure they work with new state]
+
+  const handleCallCommand = (command) => {
+    const contactMatch = command.match(/call\s+(.+)/i);
+    if (!contactMatch) {
+      speak("Who would you like to call?");
+      setTips("💡 Try: 'call mom' or 'call +255712345678'");
+      return;
+    }
+
+    const contactQuery = contactMatch[1].trim();
+    
+    // Check for emergency numbers
+    if (contactQuery.includes('emergency') || contactQuery.includes('ambulance')) {
+      makeCall('112');
+      return;
+    }
+    
+    // Check if it's a direct number
+    if (/[\d\+]/.test(contactQuery[0])) {
+      makeCall(contactQuery);
+      return;
+    }
+
+    // Find contact by name
+    const contact = contacts.find(c => 
+      c.name.toLowerCase().includes(contactQuery.toLowerCase())
+    );
+
+    if (contact) {
+      makeCall(contact.number, contact.name);
+    } else {
+      speak(`Contact ${contactQuery} not found.`);
+      setTips(`Try: 'save contact ${contactQuery} +255712345678' first`);
+    }
+  };
+
+  const makeCall = (phoneNumber, contactName = null) => {
+    const formattedNumber = phoneNumber.replace(/\D/g, '');
+    const telUrl = `tel:${formattedNumber}`;
+    
+    if (isMobile) {
+      speak(`Calling ${contactName || phoneNumber}`);
+      setMessage(`📞 Calling ${contactName || phoneNumber}...`);
+      
+      const link = document.createElement('a');
+      link.href = telUrl;
+      setTimeout(() => link.click(), 500);
+    } else {
+      speak(`On mobile, I would call ${contactName || phoneNumber}`);
+      setMessage(`📞 Would call: ${contactName || formattedNumber}`);
+      setTips("Phone calls only work on mobile devices");
     }
   };
 
   const handleSmsCommand = (command) => {
-    const match = command.match(/message\s+(.+?)\s+(.+)/);
-    if (match) {
-      const [, contact, message] = match;
-      speak(`Sending message to ${contact}`);
-      setMessage(`💬 SMS to ${contact}`);
-      
-      if (isMobile) {
-        setTimeout(() => {
-          window.open(`sms:${contact.replace(/\D/g, '')}?body=${encodeURIComponent(message)}`, '_blank');
-        }, 1000);
-      }
+    const messageMatch = command.match(/message\s+(.+?)\s+(.+)/i);
+    if (!messageMatch) {
+      speak("Who would you like to message and what should I say?");
+      setTips("💡 Try: 'message John hello how are you'");
+      return;
+    }
+
+    const contactQuery = messageMatch[1].trim();
+    const messageText = messageMatch[2].trim();
+    
+    // Check if it's a direct number
+    if (/[\d\+]/.test(contactQuery[0])) {
+      sendSms(contactQuery, messageText);
+      return;
+    }
+
+    // Find contact by name
+    const contact = contacts.find(c => 
+      c.name.toLowerCase().includes(contactQuery.toLowerCase())
+    );
+
+    if (contact) {
+      sendSms(contact.number, messageText, contact.name);
+    } else {
+      speak(`Contact ${contactQuery} not found.`);
+      setTips(`Try: 'save contact ${contactQuery} +255712345678' first`);
     }
   };
 
-  const handleEmailCommand = (command) => {
-    const match = command.match(/email\s+(.+?)\s+(.+)/);
-    if (match) {
-      const [, contact, subject] = match;
-      speak(`Composing email to ${contact}`);
-      setMessage(`📧 Email to ${contact}`);
-      
-      setTimeout(() => {
-        window.open(`mailto:${contact}?subject=${encodeURIComponent(subject)}`, '_blank');
-      }, 1000);
-    }
-  };
-
-  // 📱 WHATSAPP & SOCIAL MEDIA
-  const handleWhatsAppStatus = (command) => {
-    const match = command.match(/whatsapp status\s+(.+)/);
-    const status = match ? match[1] : "Having a great day!";
-    speak(`Creating WhatsApp status: ${status}`);
-    setMessage("📱 WhatsApp Status");
+  const sendSms = (phoneNumber, message, contactName = null) => {
+    const formattedNumber = phoneNumber.replace(/\D/g, '');
+    const smsUrl = `sms:${formattedNumber}?body=${encodeURIComponent(message)}`;
     
     if (isMobile) {
-      setTimeout(() => {
-        window.open(`whatsapp://send?text=${encodeURIComponent(status)}`, '_blank');
-      }, 1000);
-    }
-  };
-
-  const handleWhatsAppMessage = (command) => {
-    const match = command.match(/whatsapp\s+(.+?)\s+(.+)/);
-    if (match) {
-      const [, contact, message] = match;
-      speak(`Sending WhatsApp to ${contact}`);
-      setMessage("💬 WhatsApp");
+      speak(`Sending message to ${contactName || phoneNumber}`);
+      setMessage(`💬 SMS to ${contactName || phoneNumber}...`);
       
-      if (isMobile) {
-        setTimeout(() => {
-          window.open(`https://wa.me/${contact.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`, '_blank');
-        }, 1000);
-      }
+      const link = document.createElement('a');
+      link.href = smsUrl;
+      setTimeout(() => link.click(), 500);
+    } else {
+      speak(`On mobile, I would send SMS to ${contactName || phoneNumber}`);
+      setMessage(`💬 Would SMS: ${contactName || formattedNumber}`);
     }
   };
 
-  const handleSocialMediaStatus = (command) => {
-    if (command.includes("facebook")) {
-      speak("Sharing on Facebook");
-      setMessage("📘 Facebook");
-      setTimeout(() => {
-        window.open('https://www.facebook.com/', '_blank');
-      }, 1000);
-    } else if (command.includes("instagram")) {
-      speak("Sharing on Instagram");
-      setMessage("📸 Instagram");
-      setTimeout(() => {
-        window.open('https://www.instagram.com/', '_blank');
-      }, 1000);
+  const handleContactCommand = (command) => {
+    if (command.includes("save contact") || command.includes("add contact")) {
+      handleAddContact(command);
+    } else if (command.includes("delete contact") || command.includes("remove contact")) {
+      handleDeleteContact(command);
+    } else if (command.includes("show contacts") || command.includes("my contacts")) {
+      listContacts();
+    } else if (command.includes("find contact") || command.includes("search contact")) {
+      handleSearchContact(command);
     }
   };
 
-  // 👤 CONTACTS
   const handleAddContact = (command) => {
-    const match = command.match(/add contact\s+(.+?)\s+(\+?[\d\s]+)/);
-    if (match) {
-      const [, name, number] = match;
-      const newContact = { name, number: number.replace(/\s/g, '') };
-      const updatedContacts = [...contacts, newContact];
+    const addMatch = command.match(/add contact\s+(.+?)\s+(\+?[\d\s]+)/i);
+    if (!addMatch) {
+      speak("Please specify name and phone number");
+      setTips("💡 Try: 'save contact John +255712345678'");
+      return;
+    }
+
+    const name = addMatch[1].trim();
+    let number = addMatch[2].replace(/\s/g, '');
+    
+    // Format number
+    if (!number.startsWith('+') && !number.startsWith('255') && number.length === 9) {
+      number = '+255' + number;
+    } else if (number.startsWith('0') && number.length === 10) {
+      number = '+255' + number.substring(1);
+    }
+    
+    const newContact = { 
+      name, 
+      number, 
+      email: '',
+      isWhatsApp: true 
+    };
+    const updatedContacts = [...contacts, newContact];
+    setContacts(updatedContacts);
+    localStorage.setItem('voiceAssistantContacts', JSON.stringify(updatedContacts));
+    
+    speak(`Contact ${name} saved successfully`);
+    setMessage(`✅ Contact saved: ${name}`);
+    setTips(`📱 New contact: ${name} - ${number}`);
+  };
+
+  const handleDeleteContact = (command) => {
+    const deleteMatch = command.match(/delete contact\s+(.+)/i);
+    if (!deleteMatch) {
+      speak("Which contact would you like to delete?");
+      return;
+    }
+
+    const contactQuery = deleteMatch[1].trim();
+    const contactIndex = contacts.findIndex(c => 
+      c.name.toLowerCase().includes(contactQuery.toLowerCase())
+    );
+
+    if (contactIndex !== -1) {
+      const updatedContacts = [...contacts];
+      const deletedContact = updatedContacts.splice(contactIndex, 1)[0];
       setContacts(updatedContacts);
-      saveToLocalStorage('voiceAssistantContacts', updatedContacts);
+      localStorage.setItem('voiceAssistantContacts', JSON.stringify(updatedContacts));
       
-      speak(`Contact ${name} saved`);
-      setMessage(`✅ ${name} saved`);
+      speak(`Contact ${deletedContact.name} deleted`);
+      setMessage(`🗑️ Contact deleted: ${deletedContact.name}`);
+    } else {
+      speak(`Contact ${contactQuery} not found`);
+    }
+  };
+
+  const handleSearchContact = (command) => {
+    const searchMatch = command.match(/find contact\s+(.+)/i);
+    if (!searchMatch) {
+      speak("Who are you looking for?");
+      return;
+    }
+
+    const contactQuery = searchMatch[1].trim();
+    const foundContacts = contacts.filter(c => 
+      c.name.toLowerCase().includes(contactQuery.toLowerCase()) ||
+      c.number.includes(contactQuery)
+    );
+
+    if (foundContacts.length > 0) {
+      const contactList = foundContacts.slice(0, 3).map(c => `${c.name}: ${c.number}`).join(", ");
+      speak(`Found ${foundContacts.length} contacts: ${contactList}`);
+      setMessage(`🔍 Found ${foundContacts.length} contacts`);
+      setTips(foundContacts.slice(0, 3).map(c => `${c.name}`).join(", "));
+    } else {
+      speak(`No contacts found for ${contactQuery}`);
     }
   };
 
   const listContacts = () => {
     if (contacts.length === 0) {
-      speak("No contacts saved");
-    } else {
-      const contactList = contacts.slice(0, 3).map(c => c.name).join(', ');
-      speak(`You have ${contacts.length} contacts including ${contactList}`);
-      setMessage(`📇 ${contacts.length} Contacts`);
+      speak("You have no contacts saved");
+      setMessage("No contacts found");
+      return;
     }
+    
+    const contactList = contacts.slice(0, 5).map(c => `${c.name}: ${c.number}`).join(", ");
+    speak(`You have ${contacts.length} contacts. ${contactList}`);
+    setMessage(`📇 Contacts (${contacts.length}):`);
+    setTips(contacts.slice(0, 3).map(c => `${c.name}`).join(", "));
   };
 
-  // 🕐 UTILITIES
+  const handleCameraCommand = () => {
+    if (!supportedFeatures.camera) {
+      speak("Camera not supported");
+      return;
+    }
+
+    speak("Opening camera. Allow access when prompted");
+    setMessage("📸 Opening camera...");
+    
+    navigator.mediaDevices.getUserMedia({ 
+      video: { facingMode: 'environment' },
+      audio: false 
+    })
+      .then(stream => {
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.autoplay = true;
+        video.style.cssText = `
+          position: fixed; top: 50%; left: 50%;
+          transform: translate(-50%, -50%);
+          z-index: 1000; max-width: 90%; max-height: 90%;
+          border: 5px solid white; border-radius: 10px;
+          box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        `;
+        video.id = 'camera-feed';
+        
+        const controls = document.createElement('div');
+        controls.style.cssText = `
+          position: fixed; bottom: 20px; left: 50%;
+          transform: translateX(-50%); z-index: 1001;
+          display: flex; gap: 10px;
+        `;
+        
+        const captureBtn = document.createElement('button');
+        captureBtn.textContent = '📸 Take Photo';
+        captureBtn.style.cssText = `
+          padding: 10px 20px; background: #4CAF50;
+          color: white; border: none; border-radius: 5px;
+          cursor: pointer;
+        `;
+        captureBtn.onclick = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0);
+          
+          const link = document.createElement('a');
+          link.download = `photo-${Date.now()}.png`;
+          link.href = canvas.toDataURL('image/png');
+          link.click();
+          
+          speak("Photo captured!");
+        };
+        
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '✖ Close';
+        closeBtn.style.cssText = `
+          padding: 10px 20px; background: red;
+          color: white; border: none; border-radius: 5px;
+          cursor: pointer;
+        `;
+        closeBtn.onclick = () => {
+          stream.getTracks().forEach(track => track.stop());
+          video.remove();
+          controls.remove();
+          setMessage("Camera closed");
+        };
+        
+        controls.appendChild(captureBtn);
+        controls.appendChild(closeBtn);
+        
+        document.body.appendChild(video);
+        document.body.appendChild(controls);
+        
+        speak("Camera is active. Say 'take photo' or 'close camera'");
+        setTips("Camera active - say 'take photo' to capture");
+      })
+      .catch(error => {
+        speak("Camera access denied");
+        setMessage("❌ Camera access denied");
+      });
+  };
+
+  // Other existing functions (getCurrentTime, getCurrentDate, etc.)
+  // ... [Keep all other existing functions]
+
   const getCurrentTime = () => {
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     speak(`Current time is ${time}`);
@@ -1007,125 +1548,156 @@ function Home() {
   };
 
   const getCurrentLocation = () => {
-    if (supportedFeatures.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        position => {
-          const { latitude, longitude } = position.coords;
-          speak(`Your location is ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
-          setMessage(`📍 ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
-        },
-        error => speak("Could not get location")
-      );
+    if (!supportedFeatures.geolocation) {
+      speak("Location not available");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        const { latitude, longitude } = position.coords;
+        speak(`Your location is ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
+        setMessage(`📍 ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
+        
+        // Create Google Maps link
+        const mapsUrl = `https://www.google.com/maps?q=${latitude},${longitude}`;
+        setTips(`📍 Open in Google Maps`);
+        
+        // Add clickable link
+        setTimeout(() => {
+          const link = document.createElement('a');
+          link.href = mapsUrl;
+          link.target = '_blank';
+          link.textContent = 'Open in Maps';
+          link.style.cssText = 'color: white; text-decoration: underline;';
+          document.querySelector('.tips-container')?.appendChild(link);
+        }, 1000);
+      },
+      error => {
+        speak("Could not get location");
+        setMessage("❌ Location access denied");
+      }
+    );
+  };
+
+  const getBatteryStatus = async () => {
+    if (supportedFeatures.battery) {
+      try {
+        const battery = await navigator.getBattery();
+        const level = Math.round(battery.level * 100);
+        const charging = battery.charging ? " (charging)" : "";
+        speak(`Battery is at ${level} percent${charging}`);
+        setMessage(`🔋 ${level}%${charging ? ' ⚡' : ''}`);
+      } catch {
+        speak("Battery info not available");
+      }
+    } else {
+      speak("Battery API not supported");
     }
   };
 
-  const getWeatherInfo = () => {
-    speak("Weather information would use location services on Pixel 3a");
-    setMessage("🌤️ Weather");
-    setTips("Uses geolocation to fetch weather data");
+  const shareContent = async () => {
+    if (supportedFeatures.share) {
+      try {
+        await navigator.share({
+          title: 'Voice Assistant',
+          text: 'Check out this amazing voice assistant!',
+          url: window.location.href
+        });
+        speak("Content shared successfully");
+      } catch {
+        speak("Share cancelled");
+      }
+    } else {
+      speak("Web Share API not supported");
+    }
   };
 
-  const handleCalculation = (command) => {
-    const match = command.match(/calculate\s+(.+)/);
-    if (match) {
-      const expression = match[1];
+  const copyToClipboard = async () => {
+    if (supportedFeatures.clipboard) {
       try {
-        // Basic calculation - in real app use a proper evaluator
-        if (expression.includes('+')) {
-          const [a, b] = expression.split('+').map(Number);
-          const result = a + b;
-          speak(`${a} plus ${b} equals ${result}`);
-          setMessage(`➕ ${a} + ${b} = ${result}`);
-        }
+        await navigator.clipboard.writeText(myPhoneNumber || 'Phone number not detected');
+        speak("Phone number copied to clipboard");
+        setMessage("📋 Copied to clipboard");
       } catch {
-        speak("Could not calculate");
+        speak("Could not copy to clipboard");
       }
     }
   };
 
-  const setAlarm = (command) => {
-    speak("Alarm setting would use device alarm features on Pixel 3a");
-    setMessage("⏰ Alarm");
-  };
-
-  const setTimer = (command) => {
-    speak("Timer setting would use device timer features");
-    setMessage("⏱️ Timer");
-  };
-
-  const setReminder = (command) => {
-    speak("Reminder setting would use device calendar or notifications");
-    setMessage("📝 Reminder");
-  };
-
-  // 📷 PHOTOS & GALLERY
-  const showCapturedPhotos = () => {
-    if (capturedPhotos.length === 0) {
-      speak("No photos captured yet");
-      setMessage("📷 No Photos");
-    } else {
-      speak(`You have ${capturedPhotos.length} captured photos`);
-      setMessage(`📷 ${capturedPhotos.length} Photos`);
-      setTips(`Latest: ${capturedPhotos[0]?.name || ''}`);
+  const triggerVibration = () => {
+    if (supportedFeatures.vibrate && isMobile) {
+      navigator.vibrate([200, 100, 200, 100, 200]);
+      speak("Device vibrating");
+      setMessage("📳 Vibrating...");
     }
   };
 
-  const showCapturedScreenshots = () => {
-    if (capturedScreenshots.length === 0) {
-      speak("No screenshots captured yet");
-      setMessage("🖥️ No Screenshots");
-    } else {
-      speak(`You have ${capturedScreenshots.length} screenshots`);
-      setMessage(`🖥️ ${capturedScreenshots.length} Screenshots`);
+  const sendNotification = (command) => {
+    if (supportedFeatures.notifications) {
+      if (Notification.permission === 'granted') {
+        const text = command.replace(/notification\s+/i, '') || 'Voice Assistant Notification';
+        new Notification('Voice Assistant', { 
+          body: text,
+          icon: '/favicon.ico'
+        });
+        speak("Notification sent");
+      } else if (Notification.permission === 'default') {
+        Notification.requestPermission().then(permission => {
+          if (permission === 'granted') {
+            sendNotification(command);
+          }
+        });
+      }
     }
   };
 
-  // ℹ️ HELP
   const showHelp = () => {
-    const helpText = `You can: Take photos, Capture screenshots, Get device info, 
-                      Make calls, Send messages, Set alarms, Check battery, 
-                      And much more on your Pixel 3a!`;
+    const helpText = `I can help you with: 
+      WhatsApp messages and status,
+      Social media posts,
+      Phone calls and SMS,
+      Camera and photos,
+      Flashlight control,
+      Alarm and timer,
+      Screen recording,
+      Device information,
+      And much more!
+      Try saying specific commands.`;
     speak(helpText);
-    setMessage("❓ Available Commands");
-    setTips("Camera, Screenshot, Call, Message, Battery, Storage, etc.");
+    setMessage("ℹ️ Available Commands");
+    setTips("WhatsApp, Call, SMS, Camera, Flashlight, Alarm, Timer, Record, etc.");
+  };
+
+  const handleCalculation = (command) => {
+    const calc = command.replace(/calculate\s+/i, '');
+    try {
+      // Simple calculation
+      const result = eval(calc.replace(/[^0-9+\-*/().]/g, ''));
+      speak(`${calc} equals ${result}`);
+      setMessage(`🧮 ${calc} = ${result}`);
+    } catch {
+      speak("Could not calculate");
+    }
   };
 
   const showMyNumber = () => {
     if (myPhoneNumber) {
       speak(`Your phone number is ${myPhoneNumber}`);
-      setMessage(`📞 ${myPhoneNumber}`);
+      setMessage(`📱 ${myPhoneNumber}`);
+      setTips("Say 'copy my number' to copy to clipboard");
     } else {
       speak("Phone number not detected");
-      setMessage("📞 Number Unknown");
+      setMessage("📱 Number not detected");
+      setTips("Say 'set my number +255712345678' to save it");
     }
   };
 
   const repeatLastCommand = () => {
     if (lastCommand) {
       handleCommand(lastCommand);
+    } else {
+      speak("No previous command");
     }
-  };
-
-  // 🌟 PIXEL 3A SPECIFIC
-  const showPixelFeatures = () => {
-    const features = `Pixel 3a features include: Excellent camera with Night Sight, 
-                      Google Assistant integration, Fast performance, 
-                      And pure Android experience.`;
-    speak(features);
-    setMessage("🌟 Pixel 3a Features");
-    setTips("Night Sight, Google Assistant, Pure Android");
-  };
-
-  const activateNightMode = () => {
-    speak("Night Sight mode would enhance low-light photography on Pixel 3a");
-    setMessage("🌙 Night Sight");
-    setTips("Pixel 3a's Night Sight improves low-light photos");
-  };
-
-  const activatePortraitMode = () => {
-    speak("Portrait mode would create beautiful background blur on Pixel 3a");
-    setMessage("👤 Portrait Mode");
-    setTips("Creates professional-looking portrait photos");
   };
 
   // Cleanup
@@ -1134,15 +1706,15 @@ function Home() {
       if (speechRecognitionRef.current) {
         speechRecognitionRef.current.stop();
       }
-      if (cameraStreamRef.current) {
-        cameraStreamRef.current.getTracks().forEach(track => track.stop());
+      if (mediaRecorderRef.current && activeFeatures.audioRecording) {
+        mediaRecorderRef.current.stop();
       }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      if (supportedFeatures.deviceOrientation) {
-        window.removeEventListener('deviceorientation', handleDeviceOrientation);
-      }
-      if (supportedFeatures.proximity) {
-        window.removeEventListener('deviceproximity', handleProximity);
+      
+      // Turn off flashlight if active
+      if (activeFeatures.flashlight) {
+        document.body.style.backgroundColor = "";
+        document.body.style.filter = "";
       }
     };
   }, []);
@@ -1150,13 +1722,19 @@ function Home() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 p-4">
       <div className="bg-white/10 backdrop-blur-xl shadow-2xl rounded-3xl p-6 md:p-8 max-w-md w-full text-center border border-white/20">
-        <h1 className="text-3xl md:text-4xl font-extrabold text-white mb-2">
-          📱 Pixel 3a Voice Assistant
-        </h1>
+        <div className="flex justify-between items-center mb-4">
+          <h1 className="text-2xl md:text-3xl font-extrabold text-white">
+            📱 Smart Voice Assistant
+          </h1>
+          <div className="text-white/80 text-sm">
+            {deviceInfo.batteryLevel && `🔋 ${deviceInfo.batteryLevel}%`}
+          </div>
+        </div>
         
         <p className="text-white/80 text-sm mb-4">
-          {deviceInfo.model || 'Mobile Device'} • {contacts.length} Contacts
-          {deviceInfo.battery && ` • 🔋 ${deviceInfo.battery.level}%`}
+          {isMobile ? "📱 Mobile" : "💻 Desktop"} • {contacts.length} Contacts
+          {myPhoneNumber && ` • 📞 ${myPhoneNumber}`}
+          {deviceInfo.networkType && ` • 📶 ${deviceInfo.networkType.toUpperCase()}`}
         </p>
 
         <div className="bg-white/20 rounded-2xl p-4 mb-4 text-white min-h-[120px] flex items-center justify-center font-medium text-lg break-words">
@@ -1164,10 +1742,29 @@ function Home() {
         </div>
 
         {tips && (
-          <div className="bg-yellow-300/20 text-yellow-100 text-sm p-3 rounded-xl mb-4 border border-yellow-100/30">
+          <div className="bg-yellow-300/20 text-yellow-100 text-sm p-3 rounded-xl mb-4 border border-yellow-100/30 tips-container">
             {tips}
           </div>
         )}
+
+        <div className="mb-4 grid grid-cols-2 gap-2">
+          <div className="bg-white/10 p-2 rounded-xl">
+            <div className="text-white/70 text-xs">Active Features</div>
+            <div className="text-white text-sm">
+              {activeFeatures.flashlight && "🔦 "}
+              {activeFeatures.audioRecording && "🎙️ "}
+              {activeFeatures.locationTracking && "📍 "}
+              {!activeFeatures.flashlight && !activeFeatures.audioRecording && !activeFeatures.locationTracking && "None"}
+            </div>
+          </div>
+          <div className="bg-white/10 p-2 rounded-xl">
+            <div className="text-white/70 text-xs">Device Status</div>
+            <div className="text-white text-sm">
+              {deviceInfo.isOnline ? "🟢 Online" : "🔴 Offline"}
+              {deviceInfo.batteryLevel && deviceInfo.batteryLevel < 20 && " ⚠️"}
+            </div>
+          </div>
+        </div>
 
         <button
           onClick={listening ? stopListening : startListening}
@@ -1180,105 +1777,157 @@ function Home() {
           {listening ? "⏹️ Stop Listening" : "🎤 Start Voice Command"}
         </button>
 
-        <div className="mt-6 grid grid-cols-3 gap-2">
+        <div className="mt-6 grid grid-cols-4 gap-2">
           <button
-            onClick={() => handleCommand("take photo")}
-            className="bg-blue-500/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-blue-500/40"
+            onClick={() => handleCommand("whatsapp to mom Hello from voice assistant!")}
+            className="bg-green-600/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-green-600/40 flex flex-col items-center"
           >
-            📷 Photo
+            <span className="text-lg">📱</span>
+            <span className="text-xs">WhatsApp</span>
           </button>
           <button
-            onClick={() => handleCommand("screenshot")}
-            className="bg-green-500/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-green-500/40"
+            onClick={toggleFlashlight}
+            className="bg-yellow-600/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-yellow-600/40 flex flex-col items-center"
           >
-            🖥️ Screenshot
-          </button>
-          <button
-            onClick={() => handleCommand("device info")}
-            className="bg-purple-500/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-purple-500/40"
-          >
-            📱 Device Info
+            <span className="text-lg">🔦</span>
+            <span className="text-xs">Flashlight</span>
           </button>
           <button
             onClick={() => handleCommand("call mom")}
-            className="bg-red-500/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-red-500/40"
+            className="bg-green-700/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-green-700/40 flex flex-col items-center"
           >
-            📞 Call
+            <span className="text-lg">📞</span>
+            <span className="text-xs">Call</span>
           </button>
           <button
-            onClick={() => handleCommand("whatsapp status Hello!")}
-            className="bg-green-600/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-green-600/40"
+            onClick={startAudioRecording}
+            className="bg-red-500/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-red-500/40 flex flex-col items-center"
           >
-            💬 WhatsApp
+            <span className="text-lg">🎙️</span>
+            <span className="text-xs">Record</span>
           </button>
           <button
-            onClick={() => handleCommand("battery")}
-            className="bg-yellow-500/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-yellow-500/40"
+            onClick={() => handleCommand("camera")}
+            className="bg-purple-600/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-purple-600/40 flex flex-col items-center"
           >
-            🔋 Battery
+            <span className="text-lg">📸</span>
+            <span className="text-xs">Camera</span>
+          </button>
+          <button
+            onClick={() => handleCommand("set alarm 7am")}
+            className="bg-blue-600/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-blue-600/40 flex flex-col items-center"
+          >
+            <span className="text-lg">⏰</span>
+            <span className="text-xs">Alarm</span>
+          </button>
+          <button
+            onClick={() => handleCommand("my location")}
+            className="bg-teal-600/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-teal-600/40 flex flex-col items-center"
+          >
+            <span className="text-lg">📍</span>
+            <span className="text-xs">Location</span>
+          </button>
+          <button
+            onClick={showHelp}
+            className="bg-gray-600/30 text-white py-2 px-3 rounded-xl text-sm hover:bg-gray-600/40 flex flex-col items-center"
+          >
+            <span className="text-lg">❓</span>
+            <span className="text-xs">Help</span>
           </button>
         </div>
 
         <p className="text-white/70 text-sm mt-4">
-          Try: <span className="font-semibold">"take photo"</span>,{" "}
-          <span className="font-semibold">"screenshot"</span>, or{" "}
-          <span className="font-semibold">"device info"</span>
+          Try: <span className="font-semibold">"WhatsApp to John hello"</span>,{" "}
+          <span className="font-semibold">"Turn on flashlight"</span>, or{" "}
+          <span className="font-semibold">"Set alarm 7am"</span>
         </p>
 
         <div className="mt-4 p-3 bg-black/20 rounded-xl">
           <p className="text-white/60 text-xs">
-            📸 Camera • 🖥️ Screenshot • 📱 Device Control • 📞 Communication
+            📱 Direct WhatsApp • 🔦 Flashlight Control • 🎙️ Audio Recording • 📸 Camera
           </p>
           <p className="text-white/50 text-xs mt-1">
-            {isMobile ? "Full mobile features enabled" : "Desktop mode"}
+            {isMobile ? "Full smartphone integration enabled" : "Desktop mode - limited features"}
           </p>
         </div>
 
         <div className="mt-4 text-white/40 text-xs">
-          <p>All processing happens locally • Privacy focused</p>
-          <p className="mt-1">Microphone & permissions required for full features</p>
+          <p>Press Ctrl+Space to start/stop listening • All processing happens locally</p>
+          <p className="mt-1">Microphone & contact permissions required for full features</p>
         </div>
       </div>
 
       <div className="mt-6 text-white/60 text-sm text-center max-w-md">
-        <p className="font-medium mb-2">🌟 Pixel 3a Features:</p>
+        <p className="font-medium mb-2">🚀 Smartphone Features:</p>
         <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="bg-white/10 p-2 rounded">"take photo"</div>
-          <div className="bg-white/10 p-2 rounded">"screenshot"</div>
-          <div className="bg-white/10 p-2 rounded">"device info"</div>
-          <div className="bg-white/10 p-2 rounded">"battery status"</div>
-          <div className="bg-white/10 p-2 rounded">"storage info"</div>
-          <div className="bg-white/10 p-2 rounded">"night sight"</div>
-          <div className="bg-white/10 p-2 rounded">"portrait mode"</div>
-          <div className="bg-white/10 p-2 rounded">"my photos"</div>
+          <div className="bg-white/10 p-2 rounded">"WhatsApp to [contact] [message]"</div>
+          <div className="bg-white/10 p-2 rounded">"Turn on flashlight"</div>
+          <div className="bg-white/10 p-2 rounded">"Start recording"</div>
+          <div className="bg-white/10 p-2 rounded">"Take screenshot"</div>
+          <div className="bg-white/10 p-2 rounded">"Set alarm 7:30"</div>
+          <div className="bg-white/10 p-2 rounded">"Set timer 5 minutes"</div>
+          <div className="bg-white/10 p-2 rounded">"Open camera"</div>
+          <div className="bg-white/10 p-2 rounded">"My location"</div>
+          <div className="bg-white/10 p-2 rounded">"Check battery"</div>
+          <div className="bg-white/10 p-2 rounded">"Device info"</div>
+          <div className="bg-white/10 p-2 rounded">"WhatsApp broadcast [message]"</div>
+          <div className="bg-white/10 p-2 rounded">"Do not disturb on"</div>
         </div>
       </div>
 
-      {capturedPhotos.length > 0 && (
+      {contacts.length > 0 && (
         <div className="mt-6 w-full max-w-md">
           <div className="bg-black/30 rounded-xl p-4">
-            <h3 className="text-white font-medium mb-2">
-              📷 Photos ({capturedPhotos.length})
+            <h3 className="text-white font-medium mb-2 flex items-center justify-between">
+              <span>📇 Your Contacts ({contacts.length})</span>
+              <button 
+                onClick={() => listContacts()}
+                className="text-xs bg-white/20 px-2 py-1 rounded"
+              >
+                Refresh
+              </button>
             </h3>
-            <div className="text-white/70 text-xs">
-              Latest: {capturedPhotos[0]?.name || 'None'}
+            <div className="space-y-2 max-h-40 overflow-y-auto">
+              {contacts.slice(0, 5).map((contact, index) => (
+                <div key={index} className="flex justify-between items-center bg-white/10 p-2 rounded">
+                  <div className="flex items-center">
+                    <span className="text-white text-sm">{contact.name}</span>
+                    {contact.isWhatsApp && !contact.group && (
+                      <span className="ml-2 text-green-400 text-xs">(WhatsApp)</span>
+                    )}
+                    {contact.group && (
+                      <span className="ml-2 text-blue-400 text-xs">(Group)</span>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    {contact.number && (
+                      <button 
+                        onClick={() => makeCall(contact.number, contact.name)}
+                        className="text-xs bg-green-500/30 px-2 py-1 rounded"
+                      >
+                        📞
+                      </button>
+                    )}
+                    {contact.isWhatsApp && contact.number && (
+                      <button 
+                        onClick={() => sendDirectWhatsAppMessage(contact, "Hello!")}
+                        className="text-xs bg-green-600/30 px-2 py-1 rounded"
+                      >
+                        📱
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
       )}
 
-      {capturedScreenshots.length > 0 && (
-        <div className="mt-4 w-full max-w-md">
-          <div className="bg-black/30 rounded-xl p-4">
-            <h3 className="text-white font-medium mb-2">
-              🖥️ Screenshots ({capturedScreenshots.length})
-            </h3>
-            <div className="text-white/70 text-xs">
-              Latest: {capturedScreenshots[0]?.name || 'None'}
-            </div>
-          </div>
-        </div>
-      )}
+      <div className="mt-4 text-white/40 text-xs text-center">
+        <p>Voice Assistant v2.0 • Enhanced Smartphone Features</p>
+        <p>Supports Android & iOS • Works best with Chrome on mobile</p>
+      </div>
     </div>
   );
 }
