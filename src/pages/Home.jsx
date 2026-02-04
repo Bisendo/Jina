@@ -7,13 +7,13 @@ function Home() {
 
   const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
 
-  // 🎤 START LISTENING
+  // 🎤 START VOICE LISTENING
   const startListening = () => {
     const SpeechRecognition =
       window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      alert("Speech recognition not supported in this browser");
+      alert("❌ Speech recognition not supported in this browser");
       return;
     }
 
@@ -44,17 +44,18 @@ function Home() {
       takeScreenshot();
     } else {
       speak("Sorry, I did not understand.");
+      setTips("💡 Try saying: 'Take screenshot'");
     }
   };
 
-  // 🔊 SPEAK
+  // 🔊 SPEAK FUNCTION
   const speak = (text) => {
     window.speechSynthesis.cancel();
     const speech = new SpeechSynthesisUtterance(text);
     window.speechSynthesis.speak(speech);
   };
 
-  // 📸 SCREENSHOT
+  // 📸 SCREENSHOT FUNCTION
   const takeScreenshot = async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       setTips("❌ Screen capture API not supported in this browser.");
@@ -93,25 +94,25 @@ function Home() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 p-4">
-      <div className="bg-white/10 backdrop-blur-lg shadow-2xl rounded-3xl p-8 max-w-md w-full text-center border border-white/20">
+      <div className="bg-white/10 backdrop-blur-xl shadow-2xl rounded-3xl p-8 max-w-md w-full text-center border border-white/20">
         
-        <h1 className="text-3xl font-bold text-white mb-4">
+        <h1 className="text-3xl md:text-4xl font-extrabold text-white mb-6">
           🎤 Voice Assistant
         </h1>
 
-        <div className="bg-white/20 rounded-xl p-4 mb-4 text-white min-h-[60px] flex items-center justify-center">
+        <div className="bg-white/20 rounded-2xl p-4 mb-4 text-white min-h-[80px] flex items-center justify-center font-medium text-lg break-words">
           {message}
         </div>
 
         {tips && (
-          <div className="bg-yellow-300/20 text-yellow-100 text-sm p-3 rounded-lg mb-4">
+          <div className="bg-yellow-300/20 text-yellow-100 text-sm p-3 rounded-xl mb-4 border border-yellow-100/30">
             {tips}
           </div>
         )}
 
         <button
           onClick={startListening}
-          className={`w-full py-3 rounded-xl font-semibold text-lg transition-all duration-300 ${
+          className={`w-full py-3 rounded-2xl font-semibold text-lg transition-all duration-300 shadow-lg ${
             listening
               ? "bg-red-500 animate-pulse text-white"
               : "bg-white text-purple-700 hover:scale-105 hover:bg-purple-100"
