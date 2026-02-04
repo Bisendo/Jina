@@ -34,17 +34,12 @@ function Home() {
   // 🧠 COMMAND HANDLER
   const handleCommand = (command) => {
     if (command.includes("screenshot") || command.includes("screen shot")) {
-      if (isMobile) {
-        speak("Screen capture works only on desktop browsers.");
-        setTips("📱 Mobile browsers block screen capture. Use a laptop or desktop.");
-        return;
-      }
-      speak("Taking screenshot. Please allow permission.");
-      setTips("👉 When popup appears, choose the screen and press SHARE.");
-      takeScreenshot();
+      handleScreenshot();
+    } else if (command.includes("shutdown") || command.includes("power off")) {
+      handleShutdown();
     } else {
       speak("Sorry, I did not understand.");
-      setTips("💡 Try saying: 'Take screenshot'");
+      setTips("💡 Try saying: 'Take screenshot' or 'Shutdown computer'");
     }
   };
 
@@ -56,15 +51,21 @@ function Home() {
   };
 
   // 📸 SCREENSHOT FUNCTION
-  const takeScreenshot = async () => {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+  const handleScreenshot = async () => {
+    if (isMobile) {
+      speak("Screen capture works only on desktop browsers.");
+      setTips("📱 Mobile browsers block screen capture. Use a laptop or desktop.");
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getDisplayMedia) {
       setTips("❌ Screen capture API not supported in this browser.");
+      speak("Screen capture is not supported.");
       return;
     }
 
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-
       const video = document.createElement("video");
       video.srcObject = stream;
       await video.play();
@@ -72,9 +73,7 @@ function Home() {
       const canvas = document.createElement("canvas");
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0);
+      canvas.getContext("2d").drawImage(video, 0, 0);
 
       const link = document.createElement("a");
       link.download = "screenshot.png";
@@ -92,10 +91,38 @@ function Home() {
     }
   };
 
+  // ⚡ SHUTDOWN FUNCTION
+  const handleShutdown = () => {
+    if (isMobile) {
+      speak("Power off is not allowed on mobile devices.");
+      setTips("📱 You cannot shut down your phone from a browser.");
+      return;
+    }
+
+    speak("Attempting to shut down computer...");
+    setTips("💻 Desktop shutdown is only possible in Node.js or Electron apps.");
+
+    // This works **only if running in a local Node.js environment**
+    if (window.require) {
+      try {
+        const { exec } = window.require("child_process");
+        exec("shutdown /s /t 0", (err) => {
+          if (err) {
+            console.error(err);
+            setTips("❌ Failed to shutdown. Check permissions.");
+          }
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    } else {
+      console.warn("Shutdown blocked by browser security.");
+    }
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 p-4">
       <div className="bg-white/10 backdrop-blur-xl shadow-2xl rounded-3xl p-8 max-w-md w-full text-center border border-white/20">
-        
         <h1 className="text-3xl md:text-4xl font-extrabold text-white mb-6">
           🎤 Voice Assistant
         </h1>
@@ -122,7 +149,7 @@ function Home() {
         </button>
 
         <p className="text-white/70 text-sm mt-4">
-          Try saying: <span className="font-semibold">"Take screenshot"</span>
+          Try saying: <span className="font-semibold">"Take screenshot"</span> or <span className="font-semibold">"Shutdown computer"</span>
         </p>
 
         <p className="text-white/50 text-xs mt-2">
