@@ -42,6 +42,9 @@ function Home() {
       command.includes("poweroff")
     ) {
       handleShutdown();
+    } else if (command.includes("hello") || command.includes("hi")) {
+      speak("Hello! How can I assist you today?");
+      setTips("💡 Try saying: 'Take screenshot' or 'Power off device'");
     } else {
       speak("Sorry, I did not understand.");
       setTips("💡 Try saying: 'Take screenshot' or 'Power off device'");
@@ -87,7 +90,7 @@ function Home() {
 
       stream.getTracks().forEach((track) => track.stop());
 
-      speak("Screenshot saved.");
+      speak("Screenshot saved successfully.");
       setTips("✅ Screenshot downloaded successfully.");
     } catch (err) {
       console.error(err);
@@ -121,16 +124,19 @@ function Home() {
           🎤 Voice Assistant
         </h1>
 
+        {/* Message Display */}
         <div className="bg-white/20 rounded-2xl p-4 mb-4 text-white min-h-[80px] flex items-center justify-center font-medium text-lg break-words">
           {message}
         </div>
 
+        {/* Tips Display */}
         {tips && (
           <div className="bg-yellow-300/20 text-yellow-100 text-sm p-3 rounded-xl mb-4 border border-yellow-100/30">
             {tips}
           </div>
         )}
 
+        {/* Voice Button */}
         <button
           onClick={startListening}
           className={`w-full py-3 rounded-2xl font-semibold text-lg transition-all duration-300 shadow-lg ${
@@ -142,13 +148,14 @@ function Home() {
           {listening ? "🎙 Listening..." : "Start Talking"}
         </button>
 
+        {/* Example Commands */}
         <p className="text-white/70 text-sm mt-4">
-          Try saying: <span className="font-semibold">"Take screenshot"</span> or{" "}
-          <span className="font-semibold">"Power off device"</span>
+          Try saying: <span className="font-semibold">"Take screenshot"</span>,{" "}
+          <span className="font-semibold">"Power off device"</span>, or <span className="font-semibold">"Hello"</span>
         </p>
 
         <p className="text-white/50 text-xs mt-2">
-          💻 Best supported on Chrome Desktop
+          💻 Best supported on Chrome Desktop; voice works on most mobile browsers
         </p>
       </div>
     </div>
